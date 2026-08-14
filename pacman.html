@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Pacman - gprz</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+body{background:#000; margin:0; display:flex; justify-content:center; align-items:center; height:100vh}
+canvas{background:#000; border:2px solid #222}
+</style>
+</head>
+<body>
+<canvas id="canvas" width="450" height="500"></canvas>
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+let pacman = {x:225,y:400,r:15,angle:0,mouth:0};
+let dir = 0; // 0=kanan 1=kiri 2=atas 3=bawah
+
+function drawPacman(){
+  ctx.fillStyle = 'yellow';
+  ctx.beginPath();
+  ctx.arc(pacman.x, pacman.y, pacman.r, pacman.mouth + dir*Math.PI/2, Math.PI*2 - pacman.mouth + dir*Math.PI/2);
+  ctx.lineTo(pacman.x, pacman.y);
+  ctx.fill();
+  pacman.mouth += 0.1;
+  if(pacman.mouth > 0.5) pacman.mouth = 0;
+}
+
+function gameLoop(){
+  ctx.clearRect(0,0,450,500);
+  drawPacman();
+  // gerak dikit
+  if(dir==0) pacman.x+=2;
+  if(dir==1) pacman.x-=2;
+  if(dir==2) pacman.y-=2;
+  if(dir==3) pacman.y+=2;
+  requestAnimationFrame(gameLoop);
+}
+
+// kontrol panah
+document.addEventListener('keydown', e=>{
+  if(e.key=='ArrowRight') dir=0;
+  if(e.key=='ArrowLeft') dir=1;
+  if(e.key=='ArrowUp') dir=2;
+  if(e.key=='ArrowDown') dir=3;
+})
+
+gameLoop();
+</script>
+</body>
+</html>
