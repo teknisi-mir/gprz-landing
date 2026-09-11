@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>KML Canvas Viewer + Jarak + Perpendicular</title>
+<style>
+  body { margin:0; font-family: sans-serif; background:#111; color:#eee; }
+  #canvas { background:#1a1a1a; display:block; width:100vw; height:65vh; touch-action: none; }
+  #info { padding:8px; font-size:14px; background:#222; }
+  #jarakBox { padding:10px; background:#000; height:20vh; overflow-y:auto; }
+  input, textarea, button { margin:4px; padding:6px; background:#333; color:#eee; border:1px solid #555; border-radius:4px; }
+  textarea { width:calc(100% - 20px); height:50px; font-family: monospace; font-size:12px; }
+  button { cursor:pointer; background:#00aaff; border:none; font-weight:bold; }
+  button:hover { background:#0088cc; }
+  #status { color: #00ff88; }
+.jarak { color:#00aaff; font-size:13px; }
+.jarak-perp { color:#ff5555; font-size:13px; }
+</style>
+</head>
+<body>
+
+<div id="info">
+  <b>KML Canvas Viewer + Hitung Jarak</b><br>
+  <input type="file" id="fileInput" accept=".kml,.txt">
+  <span id="status">Belum ada file</span><br>
+
+  <b>Atau Paste Koordinat:</b><br>
+  <textarea id="pasteBox" placeholder="Format	cabcross:  b'DT5308;100926 004154.000;117.58610786,0.62824374;117.58646618,0.62854699 Atau
+	Cabin Perimeter:  b'DT5308:0.628862,117.586782;0.628547,117.586466;0.628164,117.586091 Atau
+	Nama1:0.628862,117.586782;Nama2:0.628547,117.586466;Nama3:0.628164,117.586091 Atau
+	lat,lon,lat,lon,lat,lon,lat,lon Atau Bebas aja."></textarea><br>
+  <button onclick="parsePaste()">Tampilkan</button>
+  <button onclick="clearAll()">Clear</button>
+  <button onclick="toggleTutup()">Polyline</button>
+</div>
+
+<canvas id="canvas"></canvas>
+<div id="jarakBox"><b></b><div id="jarakList"></div></div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+let points = []; let pad = 80;
+let tutupPolygon = false;
+
+let scale = 1, offsetX = 0, offsetY = 0;
+let isDragging = false;
+let lastX = 0, lastY = 0;
+let touchStartDist = 0;
+let touchStartScale = 1;
+let activePerpPoint = null; 
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight * 0.65;
+  draw();
+}
+window.onresize = resize;
+resize();
+
+document.getElementById('fileInput').onchange = e => {
+  const file = e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = () => parseKML(reader.result);
+  reader.readAsText(file);
+};
+
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const zoomIntensity = 0.1;
+  const mouseX = e.offsetX;
+  const mouseY = e.offsetY;
+  const wheel = e.deltaY < 0? 1 : -1;
+  const zoom = Math.exp(wheel * zoomIntensity);
+  offsetX = mouseX - (mouseX - offsetX) * zoom;
+  offsetY = mouseY - (mouseY - offsetY) * zoom;
+  scale *= zoom;
+  draw();
+});
+
+function getTouchDist(touches) {
+  const dx = touches[0].clientX - touches[1].clientX;
+  const dy = touches[0].clientY - touches[1].clientY;
+  return Math.sqrt(dx*dx + dy*dy);
+}
+function getTouchMid(touches) {
+  return { x: (touches[0].clientX + touches[1].clientX) / 2, y: (touches[0].clientY + touches[1].clientY) / 2 };
+}
+
+canvas.addEventListener('mousedown', (e) => { isDragging = true; lastX = e.offsetX; lastY = e.offsetY; canvas.style.cursor = 'grabbing'; });
+canvas.addEventListener('mousemove', (e) => { if(!isDragging) return; offsetX += e.offsetX - lastX; offsetY += e.offsetY - lastY; lastX = e.offsetX; lastY = e.offsetY; draw(); });
+canvas.addEventListener('mouseup', (e) => { 
+  const dx = e.offsetX - lastX; const dy = e.offsetY - lastY;
+  if(Math.sqrt(dx*dx+dy*dy) < 5) handleCanvasClick(e.offsetX, e.offsetY); 
+  isDragging = false; canvas.style.cursor = 'grab';
+});
+canvas.addEventListener('mouseleave', () => { isDragging = false; canvas.style.cursor = 'default'; });
+
+canvas.addEventListener('touchstart', (e) => { e.preventDefault(); if(e.touches.length === 1){ isDragging = true; lastX = e.touches[0].clientX; lastY = e.touches[0].clientY; } if(e.touches.length === 2){ isDragging = false; touchStartDist = getTouchDist(e.touches); touchStartScale = scale; } });
+canvas.addEventListener('touchmove', (e) => { e.preventDefault(); if(e.touches.length === 1 && isDragging){ offsetX += e.touches[0].clientX - lastX; offsetY += e.touches[0].clientY - lastY; lastX = e.touches[0].clientX; lastY = e.touches[0].clientY; draw(); } if(e.touches.length === 2){ const newDist = getTouchDist(e.touches); const mid = getTouchMid(e.touches); const zoom = Math.pow(newDist / touchStartDist, 0.2); const rect = canvas.getBoundingClientRect(); const mouseX = mid.x - rect.left; const mouseY = mid.y - rect.top; let newScale = touchStartScale * zoom; newScale = Math.max(0.5, Math.min(newScale, 8)); offsetX = mouseX - (mouseX - offsetX) * (newScale / scale); offsetY = mouseY - (mouseY - offsetY) * (newScale / scale); scale = newScale; draw(); } });
+canvas.addEventListener('touchend', (e) => { 
+  if(e.changedTouches.length === 1 && touchStartDist === 0){
+    const rect = canvas.getBoundingClientRect();
+    handleCanvasClick(e.changedTouches[0].clientX - rect.left, e.changedTouches[0].clientY - rect.top);
+  }
+  isDragging = false; touchStartDist = 0;
+});
+canvas.style.cursor = 'grab';
+
+function addPoint(name, a, b){
+  let lat, lon;
+  if(Math.abs(a) > 90 && Math.abs(b) > 90) return; 
+
+  if(Math.abs(a) <= 90 && Math.abs(b) > 90){ // a=lat, b=lon
+    lat = a; lon = b;
+  } else if(Math.abs(b) <= 90 && Math.abs(a) > 90){ // b=lat, a=lon
+    lat = b; lon = a;
+  } else { 
+    lat = a; lon = b;
+  }
+
+  if(Math.abs(lat) <= 90 && Math.abs(lon) <= 180){
+    points.push({name, lat, lon});
+  }
+}
+
+function parsePaste(){
+  const text = document.getElementById('pasteBox').value.trim();
+  if(!text) return alert("Kolom paste masih kosong");
+  points = [];
+
+  const items = text.split(';');
+  let pakaiNama = false;
+  if(items.length > 1 && items.every(it => it.includes(':'))){
+    pakaiNama = true;
+    items.forEach((item)=>{
+      let parts = item.split(':');
+      if(parts.length >= 2){
+        let name = parts[0].trim();
+        let coord = parts.slice(1).join(':'); 
+        let [a,b] = coord.split(',').map(Number);
+        if(!isNaN(a) &&!isNaN(b)) addPoint(name, a, b); 
+      }
+    });
+  }
+
+  if(!pakaiNama || points.length === 0){
+    points = [];
+    const regexPair = /(-?\d+\.\d+),(-?\d+\.\d+)/g;
+    let match;
+    let i = 1;
+    while((match = regexPair.exec(text))!== null){
+      let lon = parseFloat(match[1]);
+      let lat = parseFloat(match[2]);
+      addPoint(`P${i}`, lat, lon); // baru kasih P1 P2 P3
+      i++;
+    }
+  }
+
+  if(points.length === 0){
+    const regex = /(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)/g;
+    let i = 1;
+    while((match = regex.exec(text))!== null){
+      let a = parseFloat(match[1]);
+      let b = parseFloat(match[2]);
+      addPoint(`P${i}`, a, b);
+      i++;
+    }
+  }
+
+  if(!points.length) return document.getElementById('status').innerText="Gagal baca format";
+  document.getElementById('status').innerText = `${points.length} titik dimuat dari paste`;
+  resetView();
+  hitungJarak(); draw();
+}
+
+function clearAll(){
+  points = []; activePerpPoint = null;
+  document.getElementById('pasteBox').value = '';
+  document.getElementById('status').innerText = 'Belum ada file';
+  document.getElementById('jarakList').innerHTML = '';
+  resetView(); draw();
+}
+
+function resetView(){ scale = 1; offsetX = 0; offsetY = 0; }
+
+function parseKML(text) {
+  points = [];
+  try {
+    const parser = new DOMParser();
+    const xml = parser.parseFromString(text, "application/xml");
+    if(xml.getElementsByTagName("parsererror").length > 0){
+      throw new Error("XML tidak valid");
+    }
+    const placemarks = xml.getElementsByTagName("Placemark");
+    for(let i = 0; i < placemarks.length; i++){
+      const pm = placemarks[i];
+      const nameEl = pm.getElementsByTagName("name")[0];
+      const pointEl = pm.getElementsByTagName("Point")[0];
+      if(!pointEl) continue;
+      const coordEl = pointEl.getElementsByTagName("coordinates")[0];
+      if(!coordEl) continue;
+      const name = nameEl? nameEl.textContent.trim() : `P${i+1}`;
+      const c = coordEl.textContent.trim().split(/\s+/)[0];
+      if(!c) return;
+      const [lon, lat] = c.split(',').map(Number);
+      if(!isNaN(lat) &&!isNaN(lon)){
+        points.push({name, lat, lon});
+      }
+    }
+  } catch(e){
+    return document.getElementById('status').innerText="Gagal baca KML: " + e.message;
+  }
+  if(!points.length) return document.getElementById('status').innerText="Gagal baca: tidak ada koordinat";
+  document.getElementById('status').innerText = `${points.length} titik dimuat dari KML`;
+  resetView();
+  hitungJarak(); draw();
+}
+
+function getDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const toRad = deg => deg * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1); const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function toggleTutup(){
+  tutupPolygon =!tutupPolygon;
+  event.target.innerText = `${tutupPolygon? 'Polygon' : 'Polyline'}`;
+  draw();
+  hitungJarak();
+}
+
+function getPointAt(x, y){
+  if(points.length === 0) return null;
+  const lats = points.map(p=>p.lat); const lons = points.map(p=>p.lon);
+  const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+  const minLon = Math.min(...lons), maxLon = Math.max(...lons);
+  const dataWidth = maxLon - minLon || 0.00001; const dataHeight = maxLat - minLat || 0.00001;
+  const baseCanvasWidth = canvas.width - 2*pad; const baseCanvasHeight = canvas.height - 2*pad;
+  const baseScale = Math.min(baseCanvasWidth / dataWidth, baseCanvasHeight / dataHeight);
+  const baseOffsetX = pad + (baseCanvasWidth - dataWidth * baseScale) / 2;
+  const baseOffsetY = pad + (baseCanvasHeight - dataHeight * baseScale) / 2;
+  const mapX = lon => baseOffsetX + (lon - minLon) * baseScale * scale + offsetX;
+  const mapY = lat => baseOffsetY + (maxLat - lat) * baseScale * scale + offsetY;
+
+  for(let p of points){
+    const px = mapX(p.lon); const py = mapY(p.lat);
+    if(Math.sqrt((x-px)**2 + (y-py)**2) < 15) return p;
+  }
+  return null;
+}
+
+// hitung proyeksi
+function getPerpendicularProjection(p, a, b){
+  const R = 6371000; 
+  const toM = (lat, lon) => ({ x: R * lon * Math.PI/180 * Math.cos(lat*Math.PI/180), y: R * lat * Math.PI/180 });
+  const pm = toM(p.lat, p.lon); const am = toM(a.lat, a.lon); const bm = toM(b.lat, b.lon);
+  const ax = bm.x - am.x; const ay = bm.y - am.y;
+  const bx = pm.x - am.x; const by = pm.y - am.y;
+  const denom = (ax*ax + ay*ay);
+  if(denom === 0) return null;
+  const t = (ax*bx + ay*by) / denom;
+  if(t < 0 || t > 1) return null; // di luar segmen
+  const projX = am.x + t * ax; const projY = am.y + t * ay;
+  const projLat = projY / R * 180/Math.PI;
+  const projLon = projX / (R * Math.cos(projLat*Math.PI/180)) * 180/Math.PI;
+  const dist = Math.sqrt((pm.x-projX)**2 + (pm.y-projY)**2);
+  return {lat: projLat, lon: projLon, dist: dist};
+}
+
+function handleCanvasClick(x, y){
+  if(points.length!== 3) return; 
+  const clicked = getPointAt(x,y);
+  if(!clicked) return;
+  activePerpPoint = (activePerpPoint === clicked.name)? null : clicked.name;
+  hitungJarak();
+  draw();
+}
+
+function hitungJarak(){
+  if(points.length < 2) { document.getElementById('jarakList').innerHTML = 'Butuh minimal 2 titik'; return; }
+  let total = 0; let html = '<b>Jarak:</b><br>';
+  for(let i=1; i<points.length; i++){ const d = getDistance(points[i-1].lat, points[i-1].lon, points[i].lat, points[i].lon); total += d; html += `<div class="jarak">${points[i-1].name} → ${points[i].name}: ${d.toFixed(2)} m</div>`; }
+  if(tutupPolygon && points.length > 2){ const d = getDistance(points.at(-1).lat, points.at(-1).lon, points[0].lat, points[0].lon); total += d; html += `<div class="jarak">${points.at(-1).name} → ${points[0].name}: ${d.toFixed(2)} m</div>`; }
+
+  if(points.length === 3 && activePerpPoint){
+    const p = points.find(pt => pt.name === activePerpPoint);
+    const [a,b] = points.filter(pt => pt.name!== activePerpPoint);
+    const proj = getPerpendicularProjection(p, a, b);
+    if(proj) html += `<hr><div class="jarak-perp">${p.name} → ${a.name}-${b.name}: ${proj.dist.toFixed(2)} m Tegak Lurus</div>`;
+  }
+
+  html += `<hr><b>TOTAL: ${total.toFixed(2)} m</b>`;
+  document.getElementById('jarakList').innerHTML = html;
+}
+
+function draw() {
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  if(points.length === 0) return;
+
+  const lats = points.map(p=>p.lat); const lons = points.map(p=>p.lon);
+  const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+  const minLon = Math.min(...lons), maxLon = Math.max(...lons);
+  const dataWidth = maxLon - minLon || 0.00001; const dataHeight = maxLat - minLat || 0.00001;
+  const baseCanvasWidth = canvas.width - 2*pad; const baseCanvasHeight = canvas.height - 2*pad;
+  const baseScale = Math.min(baseCanvasWidth / dataWidth, baseCanvasHeight / dataHeight);
+  const baseOffsetX = pad + (baseCanvasWidth - dataWidth * baseScale) / 2;
+  const baseOffsetY = pad + (baseCanvasHeight - dataHeight * baseScale) / 2;
+  const mapX = lon => baseOffsetX + (lon - minLon) * baseScale * scale + offsetX;
+  const mapY = lat => baseOffsetY + (maxLat - lat) * baseScale * scale + offsetY;
+
+  // GRID
+  ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
+  const gridStep = Math.pow(10, Math.floor(Math.log10(dataWidth/10)));
+  for(let lon = Math.floor(minLon/gridStep)*gridStep; lon <= maxLon; lon += gridStep){ let x = mapX(lon); ctx.beginPath(); ctx.moveTo(x, pad); ctx.lineTo(x, canvas.height-pad); ctx.stroke(); }
+  for(let lat = Math.floor(minLat/gridStep)*gridStep; lat <= maxLat; lat += gridStep){ let y = mapY(lat); ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(canvas.width-pad, y); ctx.stroke(); }
+
+  // GARIS
+  ctx.strokeStyle = '#00aaff'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  points.forEach((p,i)=>{ const x = mapX(p.lon); const y = mapY(p.lat); if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); });
+  if(tutupPolygon && points.length > 2){ ctx.closePath(); }
+  ctx.stroke();
+
+  // LABEL JARAK
+  ctx.fillStyle = '#ffaa00'; ctx.font = `11px sans-serif`;
+  for(let i=0; i<points.length; i++){
+    const curr = points[i]; const next = points[(i+1) % points.length];
+    if(!tutupPolygon && i === points.length-1) break;
+    const jarak = getDistance(curr.lat, curr.lon, next.lat, next.lon);
+    const midX = (mapX(curr.lon)+mapX(next.lon))/2 + 3;
+    const midY = (mapY(curr.lat)+mapY(next.lat))/2 - 8;
+    ctx.fillText(`${jarak.toFixed(1)}m`, midX, midY);
+  }
+
+  // TITIK
+  points.forEach(p=>{
+    const x = mapX(p.lon); const y = mapY(p.lat);
+    ctx.beginPath(); ctx.arc(x,y, 7, 0, Math.PI*2);
+    ctx.fillStyle = (activePerpPoint === p.name)? '#ff5555' : '#00ff88';
+    ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+  });
+
+  // BARU: GARIS PERPENDICULAR
+  if(points.length === 3 && activePerpPoint){
+    const p = points.find(pt => pt.name === activePerpPoint);
+    const [a,b] = points.filter(pt => pt.name!== activePerpPoint);
+    const proj = getPerpendicularProjection(p, a, b);
+    if(proj){
+      const x1 = mapX(p.lon); const y1 = mapY(p.lat);
+      const x2 = mapX(proj.lon); const y2 = mapY(proj.lat);
+      ctx.beginPath(); ctx.setLineDash([5, 3]);
+      ctx.moveTo(x1,y1); ctx.lineTo(x2,y2);
+      ctx.strokeStyle = '#ff5555'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.beginPath(); ctx.arc(x2,y2, 4, 0, Math.PI*2); ctx.fillStyle = '#ff5555'; ctx.fill();
+      ctx.font = `11px sans-serif`; ctx.fillStyle = '#ff5555';
+      ctx.fillText(`${proj.dist.toFixed(1)}m`, (x1+x2)/2 + 3, (y1+y2)/2 - 5);
+    }
+  }
+
+  // LABEL NAMA
+  ctx.font = `12px monospace`;
+  points.forEach(p=>{
+    const x = mapX(p.lon); const y = mapY(p.lat);
+    let labelX = x + 15; let labelY = y - 20;
+    if(x > canvas.width - 160) labelX = x - 160;
+    if(y < 50) labelY = y + 18;
+    if(y > canvas.height - 50) labelY = y - 38;
+    ctx.fillStyle = '#fff'; ctx.fillText(p.name, labelX, labelY);
+    ctx.fillStyle = '#aaa';
+    ctx.fillText(`Lat: ${p.lat.toFixed(6)}`, labelX, labelY + 14);
+    ctx.fillText(`Lon: ${p.lon.toFixed(6)}`, labelX, labelY + 28);
+  });
+}
+</script>
+</body>
+</html>
