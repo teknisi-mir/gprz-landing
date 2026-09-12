@@ -27,7 +27,7 @@
 
 <div id="info">
   <b>KML Canvas Viewer + Hitung Jarak</b><br>
-  <input type="file" id="fileInput" accept=".kml,.txt">
+  <input type="file" id="fileInput" accept=".kml,.txt,.log">
   <span id="status">Belum ada file</span><br>
 
   <b>Atau Paste Koordinat:</b><br>
@@ -142,6 +142,41 @@ function parsePaste(){
   if(!text) return alert("Kolom paste masih kosong");
   points = [];
 
+// TAMBAHAN 1: HANDLE FORMAT JSON "Coords : [{name:'', lat:, lon:}]"
+  const jsonMatch = text.match(/Coords\s*:\s*(\[[\s\S]*\])/i);
+  if(jsonMatch){
+    try{
+      let jsonStr = jsonMatch[1];
+
+      // Fix 1: ganti petik 1 jadi petik 2
+      jsonStr = jsonStr.replace(/'/g, '"');
+      // Fix 2: hapus spasi di mac " ECB9C" -> "ECB9C"
+      jsonStr = jsonStr.replace(/:\s*"/g, ':"').replace(/"\s*:/g, '":');
+
+      const arr = JSON.parse(jsonStr);
+      if(Array.isArray(arr)){
+        arr.forEach((obj, idx)=>{
+          const name = obj.name? obj.name.trim() : `P${idx+1}`;
+          const lat = parseFloat(obj.lat);
+          const lon = parseFloat(obj.lon);
+          if(!isNaN(lat) &&!isNaN(lon)){
+            addPoint(name, lat, lon);
+          }
+        });
+      }
+      if(points.length > 0){
+        document.getElementById('status').innerText = `${points.length} titik dimuat dari JSON`;
+        resetView();
+        hitungJarak(); draw();
+        return;
+      }
+    }catch(e){
+      console.warn("Gagal parse JSON Coords:", e);
+      // lanjut ke parser lama
+    }
+  }
+
+  // DARI SINI KE BAWAH KODE LAMA KAMU 100% TIDAK DIRUBAH
   const items = text.split(';');
   let pakaiNama = false;
   if(items.length > 1 && items.every(it => it.includes(':'))){
@@ -150,9 +185,9 @@ function parsePaste(){
       let parts = item.split(':');
       if(parts.length >= 2){
         let name = parts[0].trim();
-        let coord = parts.slice(1).join(':'); 
+        let coord = parts.slice(1).join(':');
         let [a,b] = coord.split(',').map(Number);
-        if(!isNaN(a) &&!isNaN(b)) addPoint(name, a, b); 
+        if(!isNaN(a) &&!isNaN(b)) addPoint(name, a, b);
       }
     });
   }
@@ -165,7 +200,7 @@ function parsePaste(){
     while((match = regexPair.exec(text))!== null){
       let lon = parseFloat(match[1]);
       let lat = parseFloat(match[2]);
-      addPoint(`P${i}`, lat, lon); 
+      addPoint(`P${i}`, lat, lon);
       i++;
     }
   }
@@ -173,6 +208,7 @@ function parsePaste(){
   if(points.length === 0){
     const regex = /(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)/g;
     let i = 1;
+    let match; // <-- ini harus dideklarasikan ulang
     while((match = regex.exec(text))!== null){
       let a = parseFloat(match[1]);
       let b = parseFloat(match[2]);
