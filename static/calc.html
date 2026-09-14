@@ -24,6 +24,9 @@
   #kmlText { flex:1; height:80px; background:#000; color:#0f0; font-family:monospace; font-size:11px; border:none; resize:vertical; }
   #copyKmlBtn, #dlKmlBtn { background:#28a745; padding:4px 8px; font-size:11px; height:28px; }
   #dlKmlBtn { background:#ff8800; }
+  #btnPeri.active-atas { background: #00ff88; }
+  #btnPeri.active-bawah { background: #0088ff; }
+  #btnPeri:disabled { background: #444; color: #888; cursor: not-allowed; }
 </style>
 </head>
 <body>
@@ -42,6 +45,8 @@
   <button onclick="clearAll()">Clear</button>
   <button onclick="toggleTutup()">Polyline</button>
   <button onclick="resetView(); draw();">Reset View</button>
+  <button id="btnPeri" onclick="togglePeri()">Peri-15</button>
+  
 </div>
 
 <div id="canvas-container">
@@ -66,6 +71,7 @@
 <script>
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
+const PERI_DISTANCE = 15;
 let points = []; let pad = 80;
 let tutupPolygon = false;
 let currentKML = "";
@@ -83,7 +89,108 @@ let screenPoints = [];
 let hiddenLines = [];
 let dragStartX = 0, dragStartY = 0;
 let perpFootPoint = null;
+let periState = 0;
+let longPressTimer;
+let longPressPoint = null;
+const LONG_PRESS_DURATION = 500;
 
+canvas.addEventListener('touchstart', (e)=>{
+  if(e.touches.length!== 1) return;
+
+  const touch = e.touches[0];
+  const rect = canvas.getBoundingClientRect();
+  longPressPoint = {x: touch.clientX - rect.left, y: touch.clientY - rect.top};
+
+  longPressTimer = setTimeout(()=>{
+    handleLongPress(longPressPoint);
+  }, LONG_PRESS_DURATION);
+
+});
+
+canvas.addEventListener('touchmove', ()=> clearTimeout(longPressTimer));
+canvas.addEventListener('touchend', ()=> clearTimeout(longPressTimer));
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+function handleLongPress(pos){
+  let closestIdx = -1;
+  let minDist = 9999;
+
+  for(let i=0; i<points.length-1; i++){
+    const p1 = points[i];
+    const p2 = points[i+1];
+    const dist = pointToLineDist(pos, latLonToCanvas(p1.lat, p1.lon), latLonToCanvas(p2.lat, p2.lon));
+
+    if(dist < minDist && dist < 20){ 
+      minDist = dist;
+      closestIdx = i;
+    }
+  }
+
+  if(closestIdx!== -1){
+    const idx = hiddenLines.indexOf(closestIdx);
+    if(idx > -1) hiddenLines.splice(idx, 1); 
+    else hiddenLines.push(closestIdx);
+
+    draw();
+    generateKML();
+  }
+}
+
+function pointToLineDist(p, a, b){
+  const A = p.x - a.x;
+  const B = p.y - a.y;
+  const C = b.x - a.x;
+  const D = b.y - a.y;
+  const dot = A * C + B * D;
+  const len_sq = C * C + D * D;
+  let param = -1;
+  if(len_sq!== 0) param = dot / len_sq;
+  let xx, yy;
+  if(param < 0) {xx = a.x; yy = a.y;}
+  else if(param > 1) {xx = b.x; yy = b.y;}
+  else {xx = a.x + param * C; yy = a.y + param * D;}
+  const dx = p.x - xx;
+  const dy = p.y - yy;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+
+function getOffsetPoint(lat1, lon1, lat2, lon2, distance, side) {
+  const toRad = deg => deg * Math.PI / 180;
+  const phi1 = toRad(lat1);
+  const cosLat = Math.cos(phi1);
+  const dLon = lon2 - lon1;
+  const dLat = lat2 - lat1;
+  const dx = dLon * cosLat;
+  const dy = dLat;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  if (len === 0) return { lat: lat1, lon: lon1 };
+  const dir = (side === 'atas') ? 1 : -1;
+  const nx = -dy / len * dir;
+  const ny =  dx / len * dir;
+  const offsetLat = (ny * distance) / 111320;
+  const offsetLon = (nx * distance) / (111320 * cosLat);
+
+  return { lat: lat1 + offsetLat, lon: lon1 + offsetLon };
+}
+
+function togglePeri(){
+  periState++;
+  if(periState > 2) periState = 0; 
+  updatePeriButton();
+  draw();
+  generateKML();
+}
+
+function updatePeriButton(){
+  const btn = document.getElementById('btnPeri');
+  btn.className = '';
+  if(periState === 0){ btn.textContent = 'PERI OFF'; }
+  if(periState === 1){ btn.textContent = 'PERI A'; btn.classList.add('active-atas'); }
+  if(periState === 2){ btn.textContent = 'PERI B'; btn.classList.add('active-bawah'); }
+  
+  btn.disabled = points.length > 8;
+}
 
 function snapToNorth() {
   if(animating) return;
@@ -137,7 +244,7 @@ function getMousePos(e) {
 function rotatePointBack(x, y){
   const cx = canvas.width/2;
   const cy = canvas.height/2;
-  const cos = Math.cos(-rotation); // dibalik
+  const cos = Math.cos(-rotation); 
   const sin = Math.sin(-rotation);
   const dx = x - cx;
   const dy = y - cy;
@@ -228,8 +335,19 @@ canvas.addEventListener('mouseup', (e) => {
 
 canvas.addEventListener('mouseleave', () => { isDragging = false; canvas.style.cursor = 'crosshair'; });
 canvas.addEventListener('touchstart', (e) => { e.preventDefault(); if(e.touches.length === 1){ isDragging = true; lastX = e.touches[0].clientX; lastY = e.touches[0].clientY; } if(e.touches.length === 2){ isDragging = false; touchStartDist = getTouchDist(e.touches); touchStartScale = scale; } });
-canvas.addEventListener('touchmove', (e) => { e.preventDefault(); if(e.touches.length === 1 && isDragging){ offsetX += e.touches[0].clientX - lastX; offsetY += e.touches[0].clientY - lastY; lastX = e.touches[0].clientX; lastY = e.touches[0].clientY; draw(); } if(e.touches.length === 2){ const newDist = getTouchDist(e.touches); const mid = getTouchMid(e.touches); const zoom = Math.pow(newDist / touchStartDist, 0.2); const rect = canvas.getBoundingClientRect(); const mouseX = mid.x - rect.left; const mouseY = mid.y - rect.top; let newScale = touchStartScale * zoom; newScale = Math.max(0.5, Math.min(newScale, 8)); offsetX = mouseX - (mouseX - offsetX) * (newScale / scale); offsetY = mouseY - (mouseY - offsetY) * (newScale / scale); scale = newScale; draw(); } });
+canvas.addEventListener('touchmove', (e) => { e.preventDefault(); if(e.touches.length === 1 && isDragging){
+  let dx = e.touches[0].clientX - lastX;
+  let dy = e.touches[0].clientY - lastY;
 
+  let cos = Math.cos(-rotation);
+  let sin = Math.sin(-rotation);
+  offsetX += dx * cos - dy * sin;
+  offsetY += dx * sin + dy * cos;
+
+  lastX = e.touches[0].clientX;
+  lastY = e.touches[0].clientY;
+  draw();
+  } });
 canvas.addEventListener('touchend', (e) => {
   if(e.changedTouches.length === 1 && touchStartDist === 0){
     const rect = canvas.getBoundingClientRect();
@@ -242,7 +360,7 @@ canvas.style.cursor = 'crosshair';
 canvas.addEventListener('contextmenu', (e)=>{
   e.preventDefault();
   const mousePos = getMousePos(e);
-  let changed = false; // <--- TAMBAH FLAG
+  let changed = false; 
 
   for(let i=0; i<screenPoints.length; i++){
     const p1 = screenPoints[i];
@@ -257,12 +375,12 @@ canvas.addEventListener('contextmenu', (e)=>{
       } else {
         hiddenLines.push(i);
       }
-      changed = true; // <--- ADA YG DIKLICK
-      break; // keluar loop aja, jangan return
+      changed = true; //
+      break; 
     }
   }
 
-  if(changed){ // <--- KALAU ADA YG DIKLICK BARU UPDATE
+  if(changed){ 
     draw();
     generateKML();
   }
@@ -410,14 +528,7 @@ function parsePaste(){
 }
 
 function clearAll(){
-  points = []; activePerpPoint = null; currentKML = "";
-  hiddenLines = [];
-  perpFootPoint = null;
-  document.getElementById('pasteBox').value = '';
-  document.getElementById('status').innerText = 'Belum ada file';
-  document.getElementById('jarakList').innerHTML = '';
-  document.getElementById('kmlBox').style.display = 'none';
-  resetView(); draw();
+  location.reload(); 
 }
 
 function resetView(){ scale = 1; offsetX = 0; offsetY = 0; rotation = 0; }
@@ -537,7 +648,6 @@ function toggleTutup(){
 function getPointAt(x, y){
   if(points.length === 0) return null;
   
-  // putar balik koordinat klik
   const unrotated = rotatePointBack(x, y);
   x = unrotated.x;
   y = unrotated.y;
@@ -555,7 +665,7 @@ function getPointAt(x, y){
   
   for(let p of points){
     const px = mapX(p.lon); const py = mapY(p.lat);
-    if(Math.sqrt((x-px)**2 + (y-py)**2) < 15) return p; // cek ke titik yg belum dirotate
+    if(Math.sqrt((x-px)**2 + (y-py)**2) < 15) return p; 
   }
   return null;
 }
@@ -563,7 +673,6 @@ function getPointAt(x, y){
 function getPerpendicularProjection(p, a, b){
   const R = 6371000;
   
-  // Gunakan latitude referensi lokal (titik a) agar konversi x dan y konsisten
   const latRefRad = a.lat * Math.PI / 180;
   const cosLatRef = Math.cos(latRefRad);
 
@@ -590,7 +699,6 @@ function getPerpendicularProjection(p, a, b){
   const projX = am.x + t * ax; 
   const projY = am.y + t * ay;
 
-  // Konversi balik ke Lat/Lon menggunakan faktor referensi yang sama
   const projLat = a.lat + (projY / R) * (180 / Math.PI);
   const projLon = a.lon + (projX / (R * cosLatRef)) * (180 / Math.PI);
 
@@ -613,10 +721,9 @@ function generateKML(){
   let allPoints = [...points];
   let allLines = [];
 
-  // LINE UTAMA - HORMATI HIDDEN
   for(let i=0; i<points.length; i++){
     if(!tutupPolygon && i === points.length-1) continue;
-    if(hiddenLines.includes(i)) continue; // <--- KUNCI
+    if(hiddenLines.includes(i)) continue; 
 
     const p1 = points[i];
     const p2 = points[(i+1) % points.length];
@@ -624,12 +731,51 @@ function generateKML(){
     allLines.push({name: `${p1.name}-${p2.name}`, coords: coords, color: 'ff00aaff'});
   }
 
-  // LINE PERP - HANYA 3 TITIK
   if(points.length === 3 && perpFootPoint && activePerpPoint){
     allPoints.push(perpFootPoint);
     const pC = points.find(pt => pt.name === activePerpPoint);
     const perpCoords = `${pC.lon.toFixed(6)},${pC.lat.toFixed(6)},0 ${perpFootPoint.lon.toFixed(6)},${perpFootPoint.lat.toFixed(6)},0`;
     allLines.push({name: `Perp-${pC.name}`, coords: perpCoords, color: 'ff0000ff'});
+  }
+
+ // Peri
+  if(periState > 0 && points.length >= 2 && points.length <= 8){
+    const side = periState === 1 ? 'atas' : 'bawah';
+    
+    for(let i = 0; i < points.length - 1; i++){
+      if(hiddenLines.includes(i)) continue; 
+
+      const p1 = points[i];
+      const p2 = points[i+1];
+
+      const op1 = getOffsetPoint(p1.lat, p1.lon, p2.lat, p2.lon, PERI_DISTANCE, side);
+      const op2 = {
+        lat: p2.lat + (op1.lat - p1.lat),
+        lon: p2.lon + (op1.lon - p1.lon)
+      };
+
+      const periCoords = `${op1.lon.toFixed(6)},${op1.lat.toFixed(6)},0 ${op2.lon.toFixed(6)},${op2.lat.toFixed(6)},0`;
+      const capCoords1 = `${op1.lon.toFixed(6)},${op1.lat.toFixed(6)},0 ${p1.lon.toFixed(6)},${p1.lat.toFixed(6)},0`;
+      const capCoords2 = `${op2.lon.toFixed(6)},${op2.lat.toFixed(6)},0 ${p2.lon.toFixed(6)},${p2.lat.toFixed(6)},0`;
+
+      allLines.push({
+        name: `PERI-${p1.name}-${p2.name}`, 
+        coords: periCoords, 
+        color: 'ff00ff00' // Hijau
+      });
+
+      allLines.push({
+        name: `CAP1-${p1.name}`, 
+        coords: capCoords1, 
+        color: 'ff00ff00' 
+      });
+
+      allLines.push({
+        name: `CAP2-${p2.name}`, 
+        coords: capCoords2, 
+        color: 'ff00ff00' 
+      });
+    }
   }
 
   let pointPlacemarks = allPoints.map(p =>`<Placemark><name>${p.name}</name><Point><coordinates>${p.lon.toFixed(6)},${p.lat.toFixed(6)},0</coordinates></Point></Placemark>`).join('');
@@ -664,11 +810,11 @@ function hitungJarak(){
   if(points.length < 2) {
     document.getElementById('jarakList').innerHTML = 'Butuh minimal 2 titik';
     document.getElementById('kmlBox').style.display = 'none';
-    perpFootPoint = null; // <--- TAMBAH
+    perpFootPoint = null; 
     return;
   }
   let total = 0; let html = '<b>Jarak:</b><br>';
-  perpFootPoint = null; // <--- TAMBAH reset
+  perpFootPoint = null;
 
   for(let i=1; i<points.length; i++){
     const d = getDistance(points[i-1].lat, points[i-1].lon, points[i].lat, points[i].lon);
@@ -688,12 +834,12 @@ function hitungJarak(){
     const proj = getPerpendicularProjection(p, a, b);
     if(proj){
       html += `<hr><div class="jarak-perp">${p.name} ⟂ ${a.name}-${b.name}: ${proj.dist.toFixed(2)} m</div>`;
-      perpFootPoint = {name: `Foot-${p.name}`, lat: proj.lat, lon: proj.lon}; // <--- SIMPAN FOOT
+      perpFootPoint = {name: `Foot-${p.name}`, lat: proj.lat, lon: proj.lon}; 
     }
   }
   html += `<hr><b>TOTAL: ${total.toFixed(2)} m</b>`;
   document.getElementById('jarakList').innerHTML = html;
-  generateKML(); // <--- TAMBAH auto update
+  generateKML(); 
 }
 
 function draw() {
@@ -749,12 +895,11 @@ function draw() {
     ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
   }
             
-  // 2. Garis per segmen
   ctx.strokeStyle = '#00aaff';
   ctx.lineWidth = 2;
   for(let i=0; i<screenPoints.length; i++){
-    if(!tutupPolygon && i === screenPoints.length-1) continue; // skip garis terakhir kalau belum tutup
-    if(hiddenLines.includes(i)) continue; // LANGSUNG SKIP KALAU DISEMBUNYIIN
+    if(!tutupPolygon && i === screenPoints.length-1) continue; 
+    if(hiddenLines.includes(i)) continue; 
 
     const p1 = screenPoints[i];
     const p2 = screenPoints[(i+1) % screenPoints.length];
@@ -765,7 +910,6 @@ function draw() {
     ctx.stroke();
   }
 
-  // 3. Point
   screenPoints.forEach(p=>{
     ctx.beginPath(); ctx.arc(p.x,p.y, 7, 0, Math.PI*2);
     ctx.fillStyle = (activePerpPoint === p.name)? '#ff5555' : '#00ff88';
@@ -773,7 +917,7 @@ function draw() {
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
   });
 
-  // 4. Garis tegak lurus - VERSI BARU PAKE perpFootPoint
+  // 4. Garis tegak lurus 
   if(points.length === 3 && perpFootPoint && activePerpPoint){
     const pC = points.find(pt => pt.name === activePerpPoint);
     if(pC){
@@ -803,8 +947,57 @@ function draw() {
       ctx.fillText(`${dist.toFixed(1)}m`, (p1.x+p2.x)/2+5, (p1.y+p2.y)/2-5);
     }
   }
+  
+  // 5. Garis peri
+  if(periState > 0 && points.length >= 2 && points.length <= 8){
+  const side = periState === 1 ? 'atas' : 'bawah';
+  
+  for(let i = 0; i < points.length - 1; i++){
+    if(hiddenLines.includes(i)) continue; 
+    
+    const p1 = points[i];
+    const p2 = points[i+1];
+    
+    const op1 = getOffsetPoint(p1.lat, p1.lon, p2.lat, p2.lon, PERI_DISTANCE, side);
+    const op2 = {
+      lat: p2.lat + (op1.lat - p1.lat),
+      lon: p2.lon + (op1.lon - p1.lon)
+    };
+    
+    const pt1 = rotatePoint(mapX(op1.lon), mapY(op1.lat));
+    const pt2 = rotatePoint(mapX(op2.lon), mapY(op2.lat));
 
-  // 5. Label
+    const orig1 = rotatePoint(mapX(p1.lon), mapY(p1.lat));
+    const orig2 = rotatePoint(mapX(p2.lon), mapY(p2.lat));
+    
+    ctx.beginPath();
+    ctx.strokeStyle = '#00ff88';
+    ctx.lineWidth = 1.5;
+    ctx.moveTo(pt1.x, pt1.y);
+    ctx.lineTo(pt2.x, pt2.y);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.strokeStyle = '#00ff88'; 
+    ctx.lineWidth = 1.5;
+
+    ctx.moveTo(pt1.x, pt1.y);
+    ctx.lineTo(orig1.x, orig1.y);
+
+    ctx.moveTo(pt2.x, pt2.y);
+    ctx.lineTo(orig2.x, orig2.y);
+
+    ctx.stroke();
+	ctx.font = `11px sans-serif`;
+    ctx.fillStyle = '#ffaa00'; 
+    const cap1MidX = (pt1.x + orig1.x) / 2 + 3;
+    const cap1MidY = (pt1.y + orig1.y) / 2 - 4;
+    ctx.fillText(`${PERI_DISTANCE.toFixed(1)}m`, cap1MidX, cap1MidY);
+    
+  }
+}
+
+  // 6. Label
   ctx.font = `11px sans-serif`;
   ctx.fillStyle = '#ffaa00';
   for(let i=0; i<screenPoints.length; i++){
