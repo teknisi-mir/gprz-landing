@@ -90,6 +90,9 @@ let hiddenLines = [];
 let dragStartX = 0, dragStartY = 0;
 let perpFootPoint = null;
 let periState = 0;
+let longPressTimer;
+let longPressPoint = null;
+const LONG_PRESS_DURATION = 500;
 
 
 function handleLongPress(pos){
@@ -315,8 +318,34 @@ canvas.addEventListener('mouseup', (e) => {
 });
 
 canvas.addEventListener('mouseleave', () => { isDragging = false; canvas.style.cursor = 'crosshair'; });
-canvas.addEventListener('touchstart', (e) => { e.preventDefault(); if(e.touches.length === 1){ isDragging = true; lastX = e.touches[0].clientX; lastY = e.touches[0].clientY; } if(e.touches.length === 2){ isDragging = false; touchStartDist = getTouchDist(e.touches); touchStartScale = scale; } });
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+
+  if(e.touches.length === 1){
+    isDragging = true;
+    lastX = e.touches[0].clientX;
+    lastY = e.touches[0].clientY;
+
+    const rect = canvas.getBoundingClientRect();
+    longPressPoint = {
+      x: e.touches[0].clientX - rect.left,
+      y: e.touches[0].clientY - rect.top
+    };
+    longPressTimer = setTimeout(() => {
+      handleLongPress(longPressPoint); 
+    }, LONG_PRESS_DURATION);
+  }
+
+  if(e.touches.length === 2){
+    isDragging = false;
+    clearTimeout(longPressTimer); 
+    touchStartDist = getTouchDist(e.touches);
+    touchStartScale = scale;
+  }
+});
+
 canvas.addEventListener('touchmove', (e) => {
+  clearTimeout(longPressTimer);
   e.preventDefault();
 
   if (e.touches.length === 1 && isDragging) {
@@ -356,6 +385,7 @@ canvas.addEventListener('touchmove', (e) => {
   }
 }, { passive: false });
 canvas.addEventListener('touchend', (e) => {
+  clearTimeout(longPressTimer);
   if(e.changedTouches.length === 1 && touchStartDist === 0){
     const rect = canvas.getBoundingClientRect();
     handleCanvasClick(e.changedTouches[0].clientX - rect.left, e.changedTouches[0].clientY - rect.top);
