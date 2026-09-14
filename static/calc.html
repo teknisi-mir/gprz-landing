@@ -6,7 +6,6 @@
 <title>KML Canvas Viewer + Jarak + Perpendicular</title>
 <style>
   body { margin:0; font-family: sans-serif; background:#111; color:#eee; }
-  #canvas { background:#1a1a1a; display:block; width:100vw; height:65vh; touch-action: none; }
   #info { padding:8px; font-size:14px; background:#222; }
   #jarakBox { padding:10px; background:#000; height:20vh; overflow-y:auto; }
   input, textarea, button { margin:4px; padding:6px; background:#333; color:#eee; border:1px solid #555; border-radius:4px; }
@@ -16,11 +15,15 @@
   #status { color: #00ff88; }
   #canvas-container {position: relative; width: 100vw; height: 65vh;}
   #canvas {background:#1a1a1a; display:block; width:100%; height:100%; touch-action: none;}
-  #compass {position: absolute; top: 15px; right: 15px; width: 50px; height: 50px; z-index: 10; pointer-events: none; color: white; text-align: center; font-family: Arial, sans-serif;}
-  #compass span { font-size: 14px; font-weight: bold; display: block; }
-  #compass .arrow { width: 0; height: 0; border-left: 12px solid transparent; border-right: 12px solid transparent; border-bottom: 25px solid white; margin: 2px auto 0 auto;}
+  #compass {position: absolute; top: 15px; right: 15px; width: 50px; height: 50px; z-index: 10; pointer-events: auto; color: white; text-align: center; font-family: Arial, sans-serif; cursor: grab; user-select: none; transform-origin: center;}
+  #compass:active { cursor: grabbing; }
+  #compass .arrow { width: 24px; height: 30px; background: white; margin: 2px auto 0 auto; clip-path: polygon(50% 0%, 0% 85%, 50% 70%, 100% 85%); will-change: transform; }
 .jarak { color:#00aaff; font-size:13px; }
 .jarak-perp { color:#ff5555; font-size:13px; }
+  #kmlBox { margin-top:8px; padding:6px; background:#111; border:1px solid #333; border-radius:4px; display:flex; gap:4px; align-items:flex-start; }
+  #kmlText { flex:1; height:80px; background:#000; color:#0f0; font-family:monospace; font-size:11px; border:none; resize:vertical; }
+  #copyKmlBtn, #dlKmlBtn { background:#28a745; padding:4px 8px; font-size:11px; height:28px; }
+  #dlKmlBtn { background:#ff8800; }
 </style>
 </head>
 <body>
@@ -32,12 +35,13 @@
 
   <b>Atau Paste Koordinat:</b><br>
   <textarea id="pasteBox" placeholder="Format	cabcross:  b'DT5308;100926 004154.000;117.58610786,0.62824374;117.58646618,0.62854699 Atau
-	Cabin Perimeter:  b'DT5308:0.628862,117.586782;0.628547,117.586466;0.628164,117.586091 Atau
+	Coords : [{'name': 'NODE 001', 'mac': ' ECCEC', 'lat': 0.6766014, 'lon': 117.47390091, 'distance': dst. Atau
 	Nama1:0.628862,117.586782;Nama2:0.628547,117.586466;Nama3:0.628164,117.586091 Atau
 	lat,lon,lat,lon,lat,lon,lat,lon Atau Bebas aja."></textarea><br>
   <button onclick="parsePaste()">Tampilkan</button>
   <button onclick="clearAll()">Clear</button>
   <button onclick="toggleTutup()">Polyline</button>
+  <button onclick="resetView(); draw();">Reset View</button>
 </div>
 
 <div id="canvas-container">
@@ -47,20 +51,72 @@
         <div class="arrow"></div>
     </div>
 </div>
-<div id="jarakBox"><b></b><div id="jarakList"></div></div>
+<div id="jarakBox">
+  <b></b>
+  <div id="jarakList"></div>
+  <div id="kmlBox" style="display:none;">
+    <textarea id="kmlText" readonly></textarea>
+    <div>
+      <button id="copyKmlBtn" onclick="copyKML()">Copy</button><br>
+      <button id="dlKmlBtn" onclick="downloadKML()">DL</button>
+    </div>
+  </div>
+</div>
 
 <script>
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 let points = []; let pad = 80;
 let tutupPolygon = false;
-
+let currentKML = "";
 let scale = 1, offsetX = 0, offsetY = 0;
 let isDragging = false;
 let lastX = 0, lastY = 0;
 let touchStartDist = 0;
 let touchStartScale = 1;
-let activePerpPoint = null; 
+let activePerpPoint = null;
+let rotation = 0; 
+let isRotatingCompass = false;
+let compassStartAngle = 0;
+let animating = false;
+let screenPoints = [];
+let hiddenLines = [];
+let dragStartX = 0, dragStartY = 0;
+let perpFootPoint = null;
+
+
+function snapToNorth() {
+  if(animating) return;
+  animating = true;
+  
+  let startRotation = rotation;
+  let targetRotation = 0;
+  let diff = targetRotation - startRotation;
+  if(diff > Math.PI) diff -= 2 * Math.PI;
+  if(diff < -Math.PI) diff += 2 * Math.PI;
+  
+  let startTime = null;
+  const duration = 1000;
+  
+  function animate(time){
+    if(!startTime) startTime = time;
+    let progress = (time - startTime) / duration;
+    if(progress > 1) progress = 1;
+    
+    let ease = 1 - Math.pow(1 - progress, 3);
+    rotation = startRotation + diff * ease;
+    
+    draw();
+    
+    if(progress < 1){
+      requestAnimationFrame(animate);
+    } else {
+      rotation = 0; 
+      animating = false;
+    }
+  }
+  requestAnimationFrame(animate);
+}
 
 function resize() {
   canvas.width = window.innerWidth;
@@ -69,6 +125,27 @@ function resize() {
 }
 window.onresize = resize;
 resize();
+
+function getMousePos(e) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: e.clientX - rect.left,
+    y: e.clientY - rect.top
+  };
+}
+
+function rotatePointBack(x, y){
+  const cx = canvas.width/2;
+  const cy = canvas.height/2;
+  const cos = Math.cos(-rotation); // dibalik
+  const sin = Math.sin(-rotation);
+  const dx = x - cx;
+  const dy = y - cy;
+  return {
+    x: cx + dx * cos - dy * sin,
+    y: cy + dx * sin + dy * cos
+  };
+}
 
 document.getElementById('fileInput').onchange = e => {
   const file = e.target.files[0];
@@ -100,25 +177,150 @@ function getTouchMid(touches) {
   return { x: (touches[0].clientX + touches[1].clientX) / 2, y: (touches[0].clientY + touches[1].clientY) / 2 };
 }
 
-canvas.addEventListener('mousedown', (e) => { isDragging = true; lastX = e.offsetX; lastY = e.offsetY; canvas.style.cursor = 'grabbing'; });
-canvas.addEventListener('mousemove', (e) => { if(!isDragging) return; offsetX += e.offsetX - lastX; offsetY += e.offsetY - lastY; lastX = e.offsetX; lastY = e.offsetY; draw(); });
-canvas.addEventListener('mouseup', (e) => { 
-  const dx = e.offsetX - lastX; const dy = e.offsetY - lastY;
-  if(Math.sqrt(dx*dx+dy*dy) < 5) handleCanvasClick(e.offsetX, e.offsetY); 
-  isDragging = false; canvas.style.cursor = 'grab';
+canvas.addEventListener('mousedown', (e) => {
+  if(e.button === 0){ 
+    isDragging = true;
+    lastX = e.offsetX;
+    lastY = e.offsetY;
+    canvas.style.cursor = 'grabbing';
+  }
 });
-canvas.addEventListener('mouseleave', () => { isDragging = false; canvas.style.cursor = 'default'; });
 
+canvas.addEventListener('mousemove', (e)=>{
+  const mousePos = getMousePos(e);
+  let isOverLine = false;
+
+  for(let i=0; i<screenPoints.length; i++){
+    const p1 = screenPoints[i];
+    const p2 = screenPoints[(i+1) % screenPoints.length];
+    if(pointToLineDistance(mousePos.x, mousePos.y, p1.x, p1.y, p2.x, p2.y) < 10){
+      isOverLine = true; break;
+    }
+  }
+
+  if(isOverLine) canvas.style.cursor = 'pointer';
+  else if(isDragging) canvas.style.cursor = 'grabbing';
+  else canvas.style.cursor = 'crosshair';
+
+  if(isDragging){
+    let dx = e.offsetX - lastX;
+    let dy = e.offsetY - lastY;
+    let cos = Math.cos(-rotation);
+    let sin = Math.sin(-rotation);
+    offsetX += dx * cos - dy * sin;
+    offsetY += dx * sin + dy * cos;
+    lastX = e.offsetX;
+    lastY = e.offsetY;
+    draw();
+  }
+});
+
+canvas.addEventListener('mouseup', (e) => {
+  console.log("mouseup");
+  if(e.button === 0){ // klik kiri
+    const dx = e.offsetX - lastX;
+    const dy = e.offsetY - lastY;
+    if(Math.sqrt(dx*dx+dy*dy) < 5) handleCanvasClick(e.offsetX, e.offsetY);
+    isDragging = false;
+    canvas.style.cursor = 'crosshair';
+  }
+});
+
+canvas.addEventListener('mouseleave', () => { isDragging = false; canvas.style.cursor = 'crosshair'; });
 canvas.addEventListener('touchstart', (e) => { e.preventDefault(); if(e.touches.length === 1){ isDragging = true; lastX = e.touches[0].clientX; lastY = e.touches[0].clientY; } if(e.touches.length === 2){ isDragging = false; touchStartDist = getTouchDist(e.touches); touchStartScale = scale; } });
-canvas.addEventListener('touchmove', (e) => { e.preventDefault(); if(e.touches.length === 1 && isDragging){ offsetX += e.touches[0].clientX - lastX; offsetY += e.touches[0].clientY - lastY; lastX = e.touches[0].clientX; lastY = e.touches[0].clientY; draw(); } if(e.touches.length === 2){ const newDist = getTouchDist(e.touches); const mid = getTouchMid(e.touches); const zoom = Math.pow(newDist / touchStartDist, 0.2); const rect = canvas.getBoundingClientRect(); const mouseX = mid.x - rect.left; const mouseY = mid.y - rect.top; let newScale = touchStartScale * zoom; newScale = Math.max(0.5, Math.min(newScale, 8)); offsetX = mouseX - (mouseX - offsetX) * (newScale / scale); offsetY = mouseY - (mouseY - offsetY) * (newScale / scale); scale = newScale; draw(); } });
-canvas.addEventListener('touchend', (e) => { 
+canvas.addEventListener('touchmove', (e) => { e.preventDefault(); if(e.touches.length === 1 && isDragging){
+  let dx = e.touches[0].clientX - lastX;
+  let dy = e.touches[0].clientY - lastY;
+
+  let cos = Math.cos(-rotation);
+  let sin = Math.sin(-rotation);
+  offsetX += dx * cos - dy * sin;
+  offsetY += dx * sin + dy * cos;
+
+  lastX = e.touches[0].clientX;
+  lastY = e.touches[0].clientY;
+  draw();
+  } });
+canvas.addEventListener('touchend', (e) => {
   if(e.changedTouches.length === 1 && touchStartDist === 0){
     const rect = canvas.getBoundingClientRect();
     handleCanvasClick(e.changedTouches[0].clientX - rect.left, e.changedTouches[0].clientY - rect.top);
   }
   isDragging = false; touchStartDist = 0;
 });
-canvas.style.cursor = 'grab';
+canvas.style.cursor = 'crosshair';
+
+canvas.addEventListener('contextmenu', (e)=>{
+  e.preventDefault();
+  const mousePos = getMousePos(e);
+  let changed = false; // <--- TAMBAH FLAG
+
+  for(let i=0; i<screenPoints.length; i++){
+    const p1 = screenPoints[i];
+    const p2 = screenPoints[(i+1) % screenPoints.length];
+    if(!tutupPolygon && i === screenPoints.length-1) continue;
+
+    const dist = pointToLineDistance(mousePos.x, mousePos.y, p1.x, p1.y, p2.x, p2.y);
+
+    if(dist < 12){
+      if(hiddenLines.includes(i)){
+        hiddenLines = hiddenLines.filter(x => x!== i);
+      } else {
+        hiddenLines.push(i);
+      }
+      changed = true; // <--- ADA YG DIKLICK
+      break; // keluar loop aja, jangan return
+    }
+  }
+
+  if(changed){ // <--- KALAU ADA YG DIKLICK BARU UPDATE
+    draw();
+    generateKML();
+  }
+});
+
+const compass = document.getElementById('compass');
+compass.style.transform = `rotate(${rotation}rad)`;
+compass.addEventListener('dblclick', snapToNorth); 
+compass.addEventListener('mousedown', (e) => {
+  e.preventDefault(); e.stopPropagation();
+  isRotatingCompass = true;
+  const rect = compass.getBoundingClientRect();
+  const cx = rect.left + rect.width/2;
+  const cy = rect.top + rect.height/2;
+  compassStartAngle = getAngle(cx, cy, e.clientX, e.clientY) - rotation;
+});
+compass.addEventListener('mousemove', (e) => {
+  if(!isRotatingCompass) return;
+  const rect = compass.getBoundingClientRect();
+  const cx = rect.left + rect.width/2;
+  const cy = rect.top + rect.height/2;
+  rotation = getAngle(cx, cy, e.clientX, e.clientY) - compassStartAngle;
+  draw();
+});
+window.addEventListener('mouseup', () => { isRotatingCompass = false; });
+
+compass.addEventListener('touchstart', (e) => {
+  e.preventDefault(); e.stopPropagation();
+  isRotatingCompass = true;
+  const rect = compass.getBoundingClientRect();
+  const cx = rect.left + rect.width/2;
+  const cy = rect.top + rect.height/2;
+  compassStartAngle = getAngle(cx, cy, e.touches[0].clientX, e.touches[0].clientY) - rotation;
+});
+compass.addEventListener('touchmove', (e) => {
+  if(!isRotatingCompass) return;
+  const rect = compass.getBoundingClientRect();
+  const cx = rect.left + rect.width/2;
+  const cy = rect.top + rect.height/2;
+  rotation = getAngle(cx, cy, e.touches[0].clientX, e.touches[0].clientY) - compassStartAngle;
+  draw();
+});
+window.addEventListener('touchend', () => { isRotatingCompass = false; });
+window.addEventListener('mouseup', () => { 
+  isDragging = false; 
+  canvas.style.cursor = 'crosshair'; 
+});
 
 function addPoint(name, a, b){
   let lat, lon;
@@ -142,15 +344,12 @@ function parsePaste(){
   if(!text) return alert("Kolom paste masih kosong");
   points = [];
 
-// TAMBAHAN 1: HANDLE FORMAT JSON "Coords : [{name:'', lat:, lon:}]"
   const jsonMatch = text.match(/Coords\s*:\s*(\[[\s\S]*\])/i);
   if(jsonMatch){
     try{
       let jsonStr = jsonMatch[1];
 
-      // Fix 1: ganti petik 1 jadi petik 2
       jsonStr = jsonStr.replace(/'/g, '"');
-      // Fix 2: hapus spasi di mac " ECB9C" -> "ECB9C"
       jsonStr = jsonStr.replace(/:\s*"/g, ':"').replace(/"\s*:/g, '":');
 
       const arr = JSON.parse(jsonStr);
@@ -167,16 +366,14 @@ function parsePaste(){
       if(points.length > 0){
         document.getElementById('status').innerText = `${points.length} titik dimuat dari JSON`;
         resetView();
-        hitungJarak(); draw();
+        hitungJarak(); draw(); generateKML(); 
         return;
       }
     }catch(e){
       console.warn("Gagal parse JSON Coords:", e);
-      // lanjut ke parser lama
     }
   }
 
-  // DARI SINI KE BAWAH KODE LAMA KAMU 100% TIDAK DIRUBAH
   const items = text.split(';');
   let pakaiNama = false;
   if(items.length > 1 && items.every(it => it.includes(':'))){
@@ -208,7 +405,7 @@ function parsePaste(){
   if(points.length === 0){
     const regex = /(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)/g;
     let i = 1;
-    let match; // <-- ini harus dideklarasikan ulang
+    let match; 
     while((match = regex.exec(text))!== null){
       let a = parseFloat(match[1]);
       let b = parseFloat(match[2]);
@@ -220,18 +417,25 @@ function parsePaste(){
   if(!points.length) return document.getElementById('status').innerText="Gagal baca format";
   document.getElementById('status').innerText = `${points.length} titik dimuat dari paste`;
   resetView();
-  hitungJarak(); draw();
+  hitungJarak(); draw(); generateKML(); 
 }
 
 function clearAll(){
-  points = []; activePerpPoint = null;
+  points = []; activePerpPoint = null; currentKML = "";
+  hiddenLines = [];
+  perpFootPoint = null;
   document.getElementById('pasteBox').value = '';
   document.getElementById('status').innerText = 'Belum ada file';
   document.getElementById('jarakList').innerHTML = '';
+  document.getElementById('kmlBox').style.display = 'none';
   resetView(); draw();
 }
 
-function resetView(){ scale = 1; offsetX = 0; offsetY = 0; }
+function resetView(){ scale = 1; offsetX = 0; offsetY = 0; rotation = 0; }
+
+function getAngle(cx, cy, x, y){
+  return Math.atan2(y - cy, x - cx);
+}
 
 function parseKML(text) {
   points = [];
@@ -286,7 +490,7 @@ function parseKML(text) {
 
       const lineEl = pm.getElementsByTagName("LineString")[0];
       if(lineEl){
-        continue; 
+        continue;
       }
     }
 
@@ -303,7 +507,28 @@ function parseKML(text) {
   if(!points.length) return document.getElementById('status').innerText="Gagal baca: tidak ada koordinat";
   document.getElementById('status').innerText = `${points.length} titik dimuat dari KML`;
   resetView();
-  hitungJarak(); draw();
+  hitungJarak(); draw(); generateKML(); 
+}
+
+function pointToLineDistance(px, py, x1, y1, x2, y2){
+  const A = px - x1;
+  const B = py - y1;
+  const C = x2 - x1;
+  const D = y2 - y1;
+
+  const dot = A * C + B * D;
+  const len_sq = C * C + D * D;
+  let param = -1;
+  if(len_sq!== 0) param = dot / len_sq;
+
+  let xx, yy;
+  if(param < 0){ xx = x1; yy = y1; }
+  else if(param > 1){ xx = x2; yy = y2; }
+  else { xx = x1 + param * C; yy = y1 + param * D; }
+
+  const dx = px - xx;
+  const dy = py - yy;
+  return Math.sqrt(dx * dx + dy * dy);
 }
 
 function getDistance(lat1, lon1, lat2, lon2) {
@@ -317,12 +542,17 @@ function getDistance(lat1, lon1, lat2, lon2) {
 function toggleTutup(){
   tutupPolygon =!tutupPolygon;
   event.target.innerText = `${tutupPolygon? 'Polygon' : 'Polyline'}`;
-  draw();
-  hitungJarak();
+  draw(); hitungJarak(); generateKML();
 }
 
 function getPointAt(x, y){
   if(points.length === 0) return null;
+  
+  // putar balik koordinat klik
+  const unrotated = rotatePointBack(x, y);
+  x = unrotated.x;
+  y = unrotated.y;
+
   const lats = points.map(p=>p.lat); const lons = points.map(p=>p.lon);
   const minLat = Math.min(...lats), maxLat = Math.max(...lats);
   const minLon = Math.min(...lons), maxLon = Math.max(...lons);
@@ -333,56 +563,148 @@ function getPointAt(x, y){
   const baseOffsetY = pad + (baseCanvasHeight - dataHeight * baseScale) / 2;
   const mapX = lon => baseOffsetX + (lon - minLon) * baseScale * scale + offsetX;
   const mapY = lat => baseOffsetY + (maxLat - lat) * baseScale * scale + offsetY;
-
+  
   for(let p of points){
     const px = mapX(p.lon); const py = mapY(p.lat);
-    if(Math.sqrt((x-px)**2 + (y-py)**2) < 15) return p;
+    if(Math.sqrt((x-px)**2 + (y-py)**2) < 15) return p; // cek ke titik yg belum dirotate
   }
   return null;
 }
 
-// hitung proyeksi
 function getPerpendicularProjection(p, a, b){
-  const R = 6371000; 
-  const toM = (lat, lon) => ({ x: R * lon * Math.PI/180 * Math.cos(lat*Math.PI/180), y: R * lat * Math.PI/180 });
-  const pm = toM(p.lat, p.lon); const am = toM(a.lat, a.lon); const bm = toM(b.lat, b.lon);
-  const ax = bm.x - am.x; const ay = bm.y - am.y;
-  const bx = pm.x - am.x; const by = pm.y - am.y;
-  const denom = (ax*ax + ay*ay);
+  const R = 6371000;
+  
+  // Gunakan latitude referensi lokal (titik a) agar konversi x dan y konsisten
+  const latRefRad = a.lat * Math.PI / 180;
+  const cosLatRef = Math.cos(latRefRad);
+
+  const toM = (lat, lon) => ({ 
+    x: R * (lon - a.lon) * Math.PI / 180 * cosLatRef, 
+    y: R * (lat - a.lat) * Math.PI / 180 
+  });
+
+  const pm = toM(p.lat, p.lon); 
+  const am = toM(a.lat, a.lon); 
+  const bm = toM(b.lat, b.lon);
+
+  const ax = bm.x - am.x; 
+  const ay = bm.y - am.y;
+  const bx = pm.x - am.x; 
+  const by = pm.y - am.y;
+
+  const denom = (ax * ax + ay * ay);
   if(denom === 0) return null;
-  const t = (ax*bx + ay*by) / denom;
-  if(t < 0 || t > 1) return null; // di luar segmen
-  const projX = am.x + t * ax; const projY = am.y + t * ay;
-  const projLat = projY / R * 180/Math.PI;
-  const projLon = projX / (R * Math.cos(projLat*Math.PI/180)) * 180/Math.PI;
-  const dist = Math.sqrt((pm.x-projX)**2 + (pm.y-projY)**2);
+
+  const t = (ax * bx + ay * by) / denom;
+  if(t < 0 || t > 1) return null;
+
+  const projX = am.x + t * ax; 
+  const projY = am.y + t * ay;
+
+  // Konversi balik ke Lat/Lon menggunakan faktor referensi yang sama
+  const projLat = a.lat + (projY / R) * (180 / Math.PI);
+  const projLon = a.lon + (projX / (R * cosLatRef)) * (180 / Math.PI);
+
+  const dist = Math.sqrt((pm.x - projX)**2 + (pm.y - projY)**2);
+
   return {lat: projLat, lon: projLon, dist: dist};
 }
 
 function handleCanvasClick(x, y){
-  if(points.length!== 3) return; 
+  if(points.length!== 3) return;
   const clicked = getPointAt(x,y);
   if(!clicked) return;
   activePerpPoint = (activePerpPoint === clicked.name)? null : clicked.name;
-  hitungJarak();
-  draw();
+  hitungJarak(); draw();
+}
+
+function generateKML(){
+  if(points.length < 1) { currentKML = ""; document.getElementById('kmlBox').style.display = 'none'; return; }
+
+  let allPoints = [...points];
+  let allLines = [];
+
+  // LINE UTAMA - HORMATI HIDDEN
+  for(let i=0; i<points.length; i++){
+    if(!tutupPolygon && i === points.length-1) continue;
+    if(hiddenLines.includes(i)) continue; // <--- KUNCI
+
+    const p1 = points[i];
+    const p2 = points[(i+1) % points.length];
+    const coords = `${p1.lon.toFixed(6)},${p1.lat.toFixed(6)},0 ${p2.lon.toFixed(6)},${p2.lat.toFixed(6)},0`;
+    allLines.push({name: `${p1.name}-${p2.name}`, coords: coords, color: 'ff00aaff'});
+  }
+
+  // LINE PERP - HANYA 3 TITIK
+  if(points.length === 3 && perpFootPoint && activePerpPoint){
+    allPoints.push(perpFootPoint);
+    const pC = points.find(pt => pt.name === activePerpPoint);
+    const perpCoords = `${pC.lon.toFixed(6)},${pC.lat.toFixed(6)},0 ${perpFootPoint.lon.toFixed(6)},${perpFootPoint.lat.toFixed(6)},0`;
+    allLines.push({name: `Perp-${pC.name}`, coords: perpCoords, color: 'ff0000ff'});
+  }
+
+  let pointPlacemarks = allPoints.map(p =>`<Placemark><name>${p.name}</name><Point><coordinates>${p.lon.toFixed(6)},${p.lat.toFixed(6)},0</coordinates></Point></Placemark>`).join('');
+  let linePlacemarks = allLines.map(l =>`<Placemark><name>${l.name}</name><Style><LineStyle><color>${l.color}</color><width>2</width></LineStyle></Style><LineString><coordinates>${l.coords}</coordinates></LineString></Placemark>`).join('');
+
+  currentKML = `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>KML Export</name>${linePlacemarks}${pointPlacemarks}</Document></kml>`;
+  document.getElementById('kmlText').value = currentKML;
+  document.getElementById('kmlBox').style.display = 'flex';
+}
+
+function copyKML(){
+  navigator.clipboard.writeText(currentKML).then(() => {
+    const btn = document.getElementById('copyKmlBtn');
+    btn.innerText = "OK";
+    setTimeout(()=> btn.innerText = "Copy", 1200);
+  });
+}
+
+function downloadKML(){
+  const blob = new Blob([currentKML], {type: "application/vnd.google-earth.kml+xml"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "export.kml";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function hitungJarak(){
-  if(points.length < 2) { document.getElementById('jarakList').innerHTML = 'Butuh minimal 2 titik'; return; }
-  let total = 0; let html = '<b>Jarak:</b><br>';
-  for(let i=1; i<points.length; i++){ const d = getDistance(points[i-1].lat, points[i-1].lon, points[i].lat, points[i].lon); total += d; html += `<div class="jarak">${points[i-1].name} → ${points[i].name}: ${d.toFixed(2)} m</div>`; }
-  if(tutupPolygon && points.length > 2){ const d = getDistance(points.at(-1).lat, points.at(-1).lon, points[0].lat, points[0].lon); total += d; html += `<div class="jarak">${points.at(-1).name} → ${points[0].name}: ${d.toFixed(2)} m</div>`; }
-
-  if(points.length === 3 && activePerpPoint){
-    const p = points.find(pt => pt.name === activePerpPoint);
-    const [a,b] = points.filter(pt => pt.name!== activePerpPoint);
-    const proj = getPerpendicularProjection(p, a, b);
-    if(proj) html += `<hr><div class="jarak-perp">${p.name} → ${a.name}-${b.name}: ${proj.dist.toFixed(2)} m Tegak Lurus</div>`;
+  if(points.length < 2) {
+    document.getElementById('jarakList').innerHTML = 'Butuh minimal 2 titik';
+    document.getElementById('kmlBox').style.display = 'none';
+    perpFootPoint = null; // <--- TAMBAH
+    return;
   }
+  let total = 0; let html = '<b>Jarak:</b><br>';
+  perpFootPoint = null; // <--- TAMBAH reset
 
+  for(let i=1; i<points.length; i++){
+    const d = getDistance(points[i-1].lat, points[i-1].lon, points[i].lat, points[i].lon);
+    total += d;
+    html += `<div class="jarak">${points[i-1].name} → ${points[i].name}: ${d.toFixed(2)} m</div>`;
+  }
+  if(tutupPolygon && points.length > 2){
+    const d = getDistance(points.at(-1).lat, points.at(-1).lon, points[0].lat, points[0].lon);
+    total += d;
+    html += `<div class="jarak">${points.at(-1).name} → ${points[0].name}: ${d.toFixed(2)} m</div>`;
+  }
+  if(points.length === 3 && activePerpPoint){ // LOCK 3 TITIK
+    const p = points.find(pt => pt.name === activePerpPoint);
+    const idx = points.indexOf(p);
+    const a = points[(idx-1+3)%3];
+    const b = points[(idx+1)%3];
+    const proj = getPerpendicularProjection(p, a, b);
+    if(proj){
+      html += `<hr><div class="jarak-perp">${p.name} ⟂ ${a.name}-${b.name}: ${proj.dist.toFixed(2)} m</div>`;
+      perpFootPoint = {name: `Foot-${p.name}`, lat: proj.lat, lon: proj.lon}; // <--- SIMPAN FOOT
+    }
+  }
   html += `<hr><b>TOTAL: ${total.toFixed(2)} m</b>`;
   document.getElementById('jarakList').innerHTML = html;
+  generateKML(); // <--- TAMBAH auto update
 }
 
 function draw() {
@@ -400,70 +722,127 @@ function draw() {
   const mapX = lon => baseOffsetX + (lon - minLon) * baseScale * scale + offsetX;
   const mapY = lat => baseOffsetY + (maxLat - lat) * baseScale * scale + offsetY;
 
-  // grid
+  const cx = canvas.width/2;
+  const cy = canvas.height/2;
+  const cos = Math.cos(rotation);
+  const sin = Math.sin(rotation);
+
+  // FUNGSI UTAMA: ROTASI 1 TITIK
+  const rotatePoint = (x0, y0) => {
+    const dx = x0 - cx;
+    const dy = y0 - cy;
+    return {
+      x: cx + dx * cos - dy * sin,
+      y: cy + dx * sin + dy * cos
+    };
+  };
+
+  screenPoints = [];
+  points.forEach(p=>{
+    const x0 = mapX(p.lon);
+    const y0 = mapY(p.lat);
+    screenPoints.push({...rotatePoint(x0, y0),...p})
+  });
+
+  // 1. Grid
   ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
   const gridStep = Math.pow(10, Math.floor(Math.log10(dataWidth/10)));
-  for(let lon = Math.floor(minLon/gridStep)*gridStep; lon <= maxLon; lon += gridStep){ let x = mapX(lon); ctx.beginPath(); ctx.moveTo(x, pad); ctx.lineTo(x, canvas.height-pad); ctx.stroke(); }
-  for(let lat = Math.floor(minLat/gridStep)*gridStep; lat <= maxLat; lat += gridStep){ let y = mapY(lat); ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(canvas.width-pad, y); ctx.stroke(); }
+  for(let lon = Math.floor(minLon/gridStep)*gridStep; lon <= maxLon; lon += gridStep){
+    let x0 = mapX(lon);
+    let p1 = rotatePoint(x0, 0);
+    let p2 = rotatePoint(x0, canvas.height);
+    ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+  }
+  for(let lat = Math.floor(minLat/gridStep)*gridStep; lat <= maxLat; lat += gridStep){
+    let y0 = mapY(lat);
+    let p1 = rotatePoint(0, y0);
+    let p2 = rotatePoint(canvas.width, y0);
+    ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+  }
+            
+  // 2. Garis per segmen
+  ctx.strokeStyle = '#00aaff';
+  ctx.lineWidth = 2;
+  for(let i=0; i<screenPoints.length; i++){
+    if(!tutupPolygon && i === screenPoints.length-1) continue; // skip garis terakhir kalau belum tutup
+    if(hiddenLines.includes(i)) continue; // LANGSUNG SKIP KALAU DISEMBUNYIIN
 
-  // garis
-  ctx.strokeStyle = '#00aaff'; ctx.lineWidth = 2;
-  ctx.beginPath();
-  points.forEach((p,i)=>{ const x = mapX(p.lon); const y = mapY(p.lat); if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); });
-  if(tutupPolygon && points.length > 2){ ctx.closePath(); }
-  ctx.stroke();
+    const p1 = screenPoints[i];
+    const p2 = screenPoints[(i+1) % screenPoints.length];
 
-  // label jarak
-  ctx.fillStyle = '#ffaa00'; ctx.font = `11px sans-serif`;
-  for(let i=0; i<points.length; i++){
-    const curr = points[i]; const next = points[(i+1) % points.length];
-    if(!tutupPolygon && i === points.length-1) break;
-    const jarak = getDistance(curr.lat, curr.lon, next.lat, next.lon);
-    const midX = (mapX(curr.lon)+mapX(next.lon))/2 + 3;
-    const midY = (mapY(curr.lat)+mapY(next.lat))/2 - 8;
-    ctx.fillText(`${jarak.toFixed(1)}m`, midX, midY);
+    ctx.beginPath();
+    ctx.moveTo(p1.x,p1.y);
+    ctx.lineTo(p2.x,p2.y);
+    ctx.stroke();
   }
 
-  // titik
-  points.forEach(p=>{
-    const x = mapX(p.lon); const y = mapY(p.lat);
-    ctx.beginPath(); ctx.arc(x,y, 7, 0, Math.PI*2);
+  // 3. Point
+  screenPoints.forEach(p=>{
+    ctx.beginPath(); ctx.arc(p.x,p.y, 7, 0, Math.PI*2);
     ctx.fillStyle = (activePerpPoint === p.name)? '#ff5555' : '#00ff88';
     ctx.fill();
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
   });
 
-  // perpendicular
-  if(points.length === 3 && activePerpPoint){
-    const p = points.find(pt => pt.name === activePerpPoint);
-    const [a,b] = points.filter(pt => pt.name!== activePerpPoint);
-    const proj = getPerpendicularProjection(p, a, b);
-    if(proj){
-      const x1 = mapX(p.lon); const y1 = mapY(p.lat);
-      const x2 = mapX(proj.lon); const y2 = mapY(proj.lat);
-      ctx.beginPath(); ctx.setLineDash([5, 3]);
-      ctx.moveTo(x1,y1); ctx.lineTo(x2,y2);
-      ctx.strokeStyle = '#ff5555'; ctx.lineWidth = 2; ctx.stroke();
+  // 4. Garis tegak lurus - VERSI BARU PAKE perpFootPoint
+  if(points.length === 3 && perpFootPoint && activePerpPoint){
+    const pC = points.find(pt => pt.name === activePerpPoint);
+    if(pC){
+      const p1 = rotatePoint(mapX(pC.lon), mapY(pC.lat));
+      const p2 = rotatePoint(mapX(perpFootPoint.lon), mapY(perpFootPoint.lat));
+      
+      // Garis putus2 merah
+      ctx.beginPath(); 
+      ctx.setLineDash([5, 3]);
+      ctx.moveTo(p1.x,p1.y); 
+      ctx.lineTo(p2.x,p2.y);
+      ctx.strokeStyle = '#ff5555'; 
+      ctx.lineWidth = 2; 
+      ctx.stroke();
       ctx.setLineDash([]);
-      ctx.beginPath(); ctx.arc(x2,y2, 4, 0, Math.PI*2); ctx.fillStyle = '#ff5555'; ctx.fill();
-      ctx.font = `11px sans-serif`; ctx.fillStyle = '#ff5555';
-      ctx.fillText(`${proj.dist.toFixed(1)}m`, (x1+x2)/2 + 3, (y1+y2)/2 - 5);
+      
+      // Titik foot
+      ctx.beginPath(); 
+      ctx.arc(p2.x,p2.y, 4, 0, Math.PI*2); 
+      ctx.fillStyle = '#ff5555'; 
+      ctx.fill();
+      
+      // Label jarak
+      ctx.font = `11px sans-serif`; 
+      ctx.fillStyle = '#ff5555';
+      const dist = getDistance(pC.lat, pC.lon, perpFootPoint.lat, perpFootPoint.lon);
+      ctx.fillText(`${dist.toFixed(1)}m`, (p1.x+p2.x)/2+5, (p1.y+p2.y)/2-5);
     }
   }
 
-  // label nama
+  // 5. Label
+  ctx.font = `11px sans-serif`;
+  ctx.fillStyle = '#ffaa00';
+  for(let i=0; i<screenPoints.length; i++){
+    const curr = screenPoints[i]; const next = screenPoints[(i+1) % screenPoints.length];
+    if(!tutupPolygon && i === screenPoints.length-1) break;
+    const jarak = getDistance(curr.lat, curr.lon, next.lat, next.lon);
+    const midX = (curr.x+next.x)/2 + 3;
+    const midY = (curr.y+next.y)/2 - 8;
+    ctx.fillText(`${jarak.toFixed(1)}m`, midX, midY);
+  }
+
   ctx.font = `12px monospace`;
-  points.forEach(p=>{
-    const x = mapX(p.lon); const y = mapY(p.lat);
-    let labelX = x + 15; let labelY = y - 20;
-    if(x > canvas.width - 160) labelX = x - 160;
-    if(y < 50) labelY = y + 18;
-    if(y > canvas.height - 50) labelY = y - 38;
+  screenPoints.forEach(p=>{
+    let labelX = p.x + 15; let labelY = p.y - 20;
+    if(p.x > canvas.width - 160) labelX = p.x - 160;
+    if(p.y < 50) labelY = p.y + 18;
+    if(p.y > canvas.height - 50) labelY = p.y - 38;
     ctx.fillStyle = '#fff'; ctx.fillText(p.name, labelX, labelY);
     ctx.fillStyle = '#aaa';
     ctx.fillText(`Lat: ${p.lat.toFixed(6)}`, labelX, labelY + 14);
     ctx.fillText(`Lon: ${p.lon.toFixed(6)}`, labelX, labelY + 28);
   });
+
+
+
+  const compass = document.getElementById('compass');
+  compass.style.transform = `rotate(${rotation}rad)`;
 }
 </script>
 </body>
