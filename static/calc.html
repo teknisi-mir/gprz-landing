@@ -90,26 +90,7 @@ let hiddenLines = [];
 let dragStartX = 0, dragStartY = 0;
 let perpFootPoint = null;
 let periState = 0;
-let longPressTimer;
-let longPressPoint = null;
-const LONG_PRESS_DURATION = 500;
 
-canvas.addEventListener('touchstart', (e)=>{
-  if(e.touches.length!== 1) return;
-
-  const touch = e.touches[0];
-  const rect = canvas.getBoundingClientRect();
-  longPressPoint = {x: touch.clientX - rect.left, y: touch.clientY - rect.top};
-
-  longPressTimer = setTimeout(()=>{
-    handleLongPress(longPressPoint);
-  }, LONG_PRESS_DURATION);
-
-});
-
-canvas.addEventListener('touchmove', ()=> clearTimeout(longPressTimer));
-canvas.addEventListener('touchend', ()=> clearTimeout(longPressTimer));
-canvas.addEventListener('contextmenu', e => e.preventDefault());
 
 function handleLongPress(pos){
   let closestIdx = -1;
