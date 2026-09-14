@@ -228,19 +228,8 @@ canvas.addEventListener('mouseup', (e) => {
 
 canvas.addEventListener('mouseleave', () => { isDragging = false; canvas.style.cursor = 'crosshair'; });
 canvas.addEventListener('touchstart', (e) => { e.preventDefault(); if(e.touches.length === 1){ isDragging = true; lastX = e.touches[0].clientX; lastY = e.touches[0].clientY; } if(e.touches.length === 2){ isDragging = false; touchStartDist = getTouchDist(e.touches); touchStartScale = scale; } });
-canvas.addEventListener('touchmove', (e) => { e.preventDefault(); if(e.touches.length === 1 && isDragging){
-  let dx = e.touches[0].clientX - lastX;
-  let dy = e.touches[0].clientY - lastY;
+canvas.addEventListener('touchmove', (e) => { e.preventDefault(); if(e.touches.length === 1 && isDragging){ offsetX += e.touches[0].clientX - lastX; offsetY += e.touches[0].clientY - lastY; lastX = e.touches[0].clientX; lastY = e.touches[0].clientY; draw(); } if(e.touches.length === 2){ const newDist = getTouchDist(e.touches); const mid = getTouchMid(e.touches); const zoom = Math.pow(newDist / touchStartDist, 0.2); const rect = canvas.getBoundingClientRect(); const mouseX = mid.x - rect.left; const mouseY = mid.y - rect.top; let newScale = touchStartScale * zoom; newScale = Math.max(0.5, Math.min(newScale, 8)); offsetX = mouseX - (mouseX - offsetX) * (newScale / scale); offsetY = mouseY - (mouseY - offsetY) * (newScale / scale); scale = newScale; draw(); } });
 
-  let cos = Math.cos(-rotation);
-  let sin = Math.sin(-rotation);
-  offsetX += dx * cos - dy * sin;
-  offsetY += dx * sin + dy * cos;
-
-  lastX = e.touches[0].clientX;
-  lastY = e.touches[0].clientY;
-  draw();
-  } });
 canvas.addEventListener('touchend', (e) => {
   if(e.changedTouches.length === 1 && touchStartDist === 0){
     const rect = canvas.getBoundingClientRect();
