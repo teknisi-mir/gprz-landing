@@ -96,28 +96,38 @@ const LONG_PRESS_DURATION = 500;
 let isLongPressTriggered = false;
 
 
-function handleLongPress(pos){
+function handleLongPress(screenPos) {
+  if (screenPoints.length < 2) return;
+
   let closestIdx = -1;
   let minDist = 9999;
+  
+  const THRESHOLD = 25; 
 
-  for(let i=0; i<points.length-1; i++){
-    const p1 = points[i];
-    const p2 = points[i+1];
-    const dist = pointToLineDist(pos, latLonToCanvas(p1.lat, p1.lon), latLonToCanvas(p2.lat, p2.lon));
+  for (let i = 0; i < screenPoints.length; i++) {
+    if (!tutupPolygon && i === screenPoints.length - 1) continue;
 
-    if(dist < minDist && dist < 20){ 
+    const p1 = screenPoints[i];
+    const p2 = screenPoints[(i + 1) % screenPoints.length];
+
+    const dist = pointToLineDistance(screenPos.x, screenPos.y, p1.x, p1.y, p2.x, p2.y);
+
+    if (dist < minDist && dist < THRESHOLD) { 
       minDist = dist;
       closestIdx = i;
     }
   }
 
-  if(closestIdx!== -1){
+  if (closestIdx !== -1) {
     const idx = hiddenLines.indexOf(closestIdx);
-    if(idx > -1) hiddenLines.splice(idx, 1); 
-    else hiddenLines.push(closestIdx);
+    if (idx > -1) {
+      hiddenLines.splice(idx, 1); 
+    } else {
+      hiddenLines.push(closestIdx);
+    }
 
     draw();
-    generateKML();
+    hitungJarak();
   }
 }
 
