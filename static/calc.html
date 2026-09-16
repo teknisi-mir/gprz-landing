@@ -71,7 +71,7 @@
   <button onclick="clearAll()">Clear</button>
   <button onclick="toggleTutup()">Polyline</button>
   <button onclick="resetView(); draw();">Reset View</button>
-  <button id="btnPeri" onclick="togglePeri()">PERI OFF</button>
+  <button id="btnPeri" onclick="togglePeri()">Peri-15m</button>
 </div>
 
 <div id="canvas-container">
@@ -836,8 +836,33 @@ function parsePaste(){
   generateKML(); 
 }
 
-function clearAll(){
-  location.reload(); 
+function clearAll() {
+  points = [];
+  pointingPoints = [];
+  hiddenLines = [];
+  tiffData = null;
+  activePerpPoint = null;
+  perpFootPoint = null;
+  currentKML = "";
+  tutupPolygon = false;
+  periState = 0;
+  isPointingMode = false;
+  resetView();
+  document.getElementById('fileInput').value = "";
+  document.getElementById('pasteBox').value = "";
+  document.getElementById('status').innerText = "Belum ada file";
+  const polyBtn = document.querySelector("button[onclick='toggleTutup()']");
+  if (polyBtn) polyBtn.innerText = "Polyline";
+  const pointingBtn = document.getElementById('pointingBtn');
+  if (pointingBtn) {
+    pointingBtn.textContent = '📍 Pointing';
+    pointingBtn.classList.remove('active');
+  }
+  updatePeriButton();
+  document.getElementById('kmlBox').style.display = 'none';
+  document.getElementById('pointingResultBox').style.display = 'none';
+  document.getElementById('jarakList').innerHTML = '';
+  draw();
 }
 
 function resetView() { 
