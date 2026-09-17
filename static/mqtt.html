@@ -7,8 +7,8 @@
 <script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
 <style>
   *{box-sizing:border-box;font-family:Consolas,monospace}
-  body{margin:0;background:#0f1115;color:#e6e6e6}
-  header{padding:16px 20px;background:#161a22;border-bottom:1px solid #2a2f3a;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  body{margin:0;background:#0f1115;color:#e6e6e6;display:flex;flex-direction:column;height:100vh}
+  header{padding:12px 20px;background:#161a22;border-bottom:1px solid #2a2f3a;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
   header h2{margin:0;font-size:18px}
   input,button{padding:8px 12px;border-radius:6px;border:1px solid #2a2f3a;background:#0f1115;color:#fff}
   button{cursor:pointer;background:#2d6cff;border:none;font-weight:bold}
@@ -18,20 +18,28 @@
   #status{font-size:13px;padding:4px 10px;border-radius:20px;background:#2a2f3a}
   #status.on{background:#0e3d1f;color:#4ade80}
   #status.off{background:#3d0e0e;color:#ff7a7a}
- .container{display:grid;grid-template-columns:320px 1fr;gap:0;height:calc(100vh - 65px)}
- .col{padding:14px;overflow:auto;border-right:1px solid #1e232e}
- .col h3{margin:0 0 12px 0;font-size:14px;text-transform:uppercase;letter-spacing:1px;color:#9aa4b2}
- .topic-item{display:flex;align-items:center;gap:8px;padding:8px 10px;background:#161a22;border:1px solid #232937;border-radius:6px;margin-bottom:6px}
- .topic-item label{flex:1;word-break:break-all;font-size:13px;cursor:pointer}
- .topic-item input{width:16px;height:16px}
-  #messages{font-size:13px;line-height:1.6}
- .msg{padding:6px 10px;border-bottom:1px solid #1a1f2b;display:grid;grid-template-columns:90px 200px 1fr;gap:10px}
- .msg.time{color:#7c8aa0}
- .msg.top{color:#4ade80;word-break:break-all}
- .msg.pay{color:#e6e6e6;word-break:break-all;white-space:pre-wrap}
- .controls{display:flex;gap:8px;margin-bottom:12px}
- .hint{font-size:12px;color:#7c8aa0;margin-top:10px}
-  @media(max-width:800px){.container{grid-template-columns:1fr}}
+
+  /* CONTAINER JADI ATAS BAWAH */
+ .container{display:flex;flex-direction:column;flex:1;overflow:hidden}
+
+  /* ATAS - TOPIC CHIPS KESAMPING */
+  #colTopics{padding:12px 14px;background:#161a22;border-bottom:1px solid #2a2f3a;flex:0 0 auto;max-height:35vh;overflow-y:auto}
+  #colTopics h3{margin:0 0 10px 0;font-size:13px;text-transform:uppercase;letter-spacing:1px;color:#9aa4b2}
+  #topicList{display:flex;flex-wrap:wrap;gap:8px}
+ .topic-item{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;background:#0f1115;border:1px solid #232937;border-radius:20px}
+ .topic-item label{font-size:12px;cursor:pointer;white-space:nowrap}
+ .topic-item input{width:14px;height:14px}
+ .topic-item:hover{border-color:#2d6cff}
+ .cnt{font-size:11px;background:#232937;padding:1px 6px;border-radius:10px}
+
+  /* BAWAH - LOG FULL */
+  #colMessages{flex:1;display:flex;flex-direction:column;overflow:hidden;padding:12px 14px}
+ .controls{display:flex;gap:8px;margin-bottom:10px;align-items:center}
+ .controls h3{margin:0;flex:1;font-size:13px;text-transform:uppercase;letter-spacing:1px;color:#9aa4b2}
+  #messages{flex:1;overflow-y:auto;font-size:13px;line-height:1.6;background:#0f1115;border:1px solid #1e232e;border-radius:6px;padding:6px}
+ .msg{padding:2px 6px;border-bottom:1px solid #161a22;white-space:pre-wrap;word-break:break-all}
+ .msg:hover{background:#161a22}
+ .hint{font-size:12px;color:#7c8aa0;margin-top:8px}
 </style>
 </head>
 <body>
@@ -45,14 +53,17 @@
 </header>
 
 <div class="container">
-  <div class="col" id="colTopics">
+  <!-- ATAS -->
+  <div id="colTopics">
     <h3>Topics (dla/) - <span id="topicCount">0</span></h3>
     <div id="topicList"></div>
     <div class="hint">Topic akan muncul otomatis</div>
   </div>
-  <div class="col">
+
+  <!-- BAWAH FULL -->
+  <div id="colMessages">
     <div class="controls">
-      <h3 style="margin:0;flex:1">Messages - <span id="msgCount">0</span></h3>
+      <h3>Messages - <span id="msgCount">0</span> | format: hh:mm:ss,topic,payload</h3>
       <button id="btnClear" class="danger">Clear</button>
     </div>
     <div id="messages"></div>
@@ -89,6 +100,7 @@ function getBrokerUrl(){
   return `ws://${ip}:${port}${path}`;
 }
 function setStatus(on, text){ statusEl.textContent = text; statusEl.className = on? 'on' : 'off'; }
+
 function renderTopics(){
   topicListEl.innerHTML = '';
   const sorted = Array.from(discoveredTopics.keys()).sort();
@@ -97,12 +109,9 @@ function renderTopics(){
     const safeId = btoa(topic).replace(/=/g,'');
     const div = document.createElement('div');
     div.className = 'topic-item';
-    div.innerHTML = `<input type="checkbox" id="chk-${safeId}" ${data.enabled?'checked':''}><label for="chk-${safeId}">${topic}</label><span style="font-size:11px;background:#232937;padding:2px 6px;border-radius:10px">${data.count}</span>`;
+    div.innerHTML = `<input type="checkbox" id="chk-${safeId}" ${data.enabled?'checked':''}><label for="chk-${safeId}">${topic}</label><span class="cnt">${data.count}</span>`;
     div.querySelector('input').addEventListener('change', (e)=>{
       discoveredTopics.get(topic).enabled = e.target.checked;
-      if(client && client.connected){
-        if(!e.target.checked){ client.unsubscribe(topic); } else { client.subscribe(topic); }
-      }
     });
     topicListEl.appendChild(div);
   });
@@ -115,19 +124,21 @@ function addOrUpdateTopic(topic){
   discoveredTopics.get(topic).count++;
   renderTopics();
 }
-function escapeHtml(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function addMessage(topic, payload){
   if(isPaused) return;
   const t = discoveredTopics.get(topic);
   if(t &&!t.enabled) return;
   const now = new Date();
   const timeStr = now.toLocaleTimeString('id-ID', {hour12:false}) + '.' + String(now.getMilliseconds()).padStart(3,'0');
+
+  const line = `${timeStr},${topic},${payload}`;
+
   const row = document.createElement('div');
   row.className = 'msg';
-  row.innerHTML = `<span class="time">${timeStr}</span><span class="top">${topic}</span><span class="pay">${escapeHtml(payload)}</span>`;
+  row.textContent = line; // pakai textContent biar aman
   messagesEl.prepend(row);
   msgCounter++; msgCountEl.textContent = msgCounter;
-  if(messagesEl.children.length > 500) messagesEl.removeChild(messagesEl.lastChild);
+  if(messagesEl.children.length > 1000) messagesEl.removeChild(messagesEl.lastChild);
 }
 btnConnect.addEventListener('click', ()=>{
   const url = getBrokerUrl();
