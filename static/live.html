@@ -286,20 +286,27 @@
   <canvas id="canvas"></canvas>
   <div id="compass"><span>N</span><div class="arrow"></div></div>
   
-  <div id="popup-geotiff">
-    <div class="popup-header">
-      <label style="margin:0;">Geotiff Ortho Photo</label>
-      <button class="btn-close" onclick="toggleGeoTiffPopup()">&times;</button>
-    </div>
-       <button id="btn-load-dynamic" onclick="loadDynamicGeoTiff()" style="width: 100%; margin-top: 8px; padding: 7px 10px; font-size: 11px; font-weight: 600; background: #234d35; color: #c8ffda; border: 1px solid #3a7a53; border-radius: 6px; cursor: pointer; box-shadow: 0 0 6px rgba(46, 213, 115, 0.3);">
-      Load Map dari server /maps/{tag}.tif
-    </button>   
-    <div id="geotiff-status-text" style="display: none; margin-top: 6px; font-size: 11px; color: #ffeb3b; text-align: center; font-weight: bold;">
-      Connecting...
-    </div>
-    <div style="margin: 10px 0; border-top: 1px solid rgba(255,255,255,0.15);"></div>
-	<label>Atau Load Manual</label>
-    <input type="file" id="geotiff-input" accept=".tif,.tiff">
+<div id="popup-geotiff">
+  <div class="popup-header">
+    <label style="margin:0;">Geotiff Ortho Photo</label>
+    <button class="btn-close" onclick="toggleGeoTiffPopup()">&times;</button>
+  </div>
+  
+  <button id="btn-load-dynamic" onclick="loadDynamicGeoTiff()" style="width: 100%; margin-top: 8px; padding: 7px 10px; font-size: 11px; font-weight: 600; background: #234d35; color: #c8ffda; border: 1px solid #3a7a53; border-radius: 6px; cursor: pointer;">
+    Load Map dari server /maps/{tag}.tif
+  </button>   
+  
+  <div id="geotiff-status-text" style="display: none; margin-top: 6px; font-size: 11px; color: #ffeb3b; text-align: center; font-weight: bold;">
+    Connecting...
+  </div>
+  <div style="margin: 10px 0; border-top: 1px solid rgba(255,255,255,0.15);"></div>
+  
+  <label>Atau Load Manual</label>
+  <input type="file" id="geotiff-input" accept=".tif,.tiff">
+
+  <button id="btnInstall" style="display:none; width:100%; margin-top:10px; padding:8px; font-size:11px; font-weight:600; background:#00ff88; color:#000; border:none; border-radius:6px; cursor:pointer;">
+    Install App
+  </button>
 </div>
 
   <div id="floating-bar">
@@ -2069,23 +2076,14 @@ setInterval(()=>{ if(Date.now() - lastDrawAt > 2000){ requestDraw(); }}, 2000);
 if('serviceWorker' in navigator){ navigator.serviceWorker.register('sw.js'); }
 
 let deferredPrompt;
-const btnInstall = document.createElement('button');
-btnInstall.textContent = 'Install App';
-btnInstall.className = 'btn-kml-green';
-btnInstall.style.display = 'none';
-btnInstall.style.position = 'fixed';
-btnInstall.style.bottom = '15px';
-btnInstall.style.right = '15px';
-btnInstall.style.zIndex = '9999';
-btnInstall.style.padding = '10px 16px';
-btnInstall.style.fontSize = '12px';
-document.body.appendChild(btnInstall);
+const btnInstall = document.getElementById('btnInstall');
 
 window.addEventListener('beforeinstallprompt', (e)=>{
   e.preventDefault();
   deferredPrompt = e;
-  btnInstall.style.display = 'inline-flex';
+  btnInstall.style.display = 'block'; 
 });
+
 btnInstall.addEventListener('click', async ()=>{
   if(!deferredPrompt) return;
   deferredPrompt.prompt();
@@ -2094,6 +2092,7 @@ btnInstall.addEventListener('click', async ()=>{
   deferredPrompt = null;
   btnInstall.style.display = 'none';
 });
+
 </script>
 <footer>© 2026 GPRZ | v2.1</footer>
 </body>
