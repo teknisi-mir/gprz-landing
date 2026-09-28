@@ -1,6 +1,11 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
+<link rel="icon" href="mir.png" type="image/x-icon">
+<link rel="apple-touch-icon" href="mir.png">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#00ff88">
+<meta name="mobile-web-app" content="yes">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Live MIR</title>
@@ -84,6 +89,7 @@
     background: rgba(255, 179, 186, 0.2); border: 1px solid rgba(255, 179, 186, 0.4);
     color: #ffb3ba; padding: 4px 8px; border-radius: 6px; cursor: pointer;
   }
+	#popup-geotiff .popup-header { display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:6px; margin-bottom:4px; width:100%; }
 
   @media (max-width: 600px) {
     #top-info-bar { top: 10px; gap: 6px; padding: 5px 8px; max-width: 95vw; }
@@ -245,6 +251,16 @@
   .popup-row{  display:flex; justify-content:space-between; gap:12px; font-family:Consolas, monospace; }
   .popup-row span{ color:#8a9bb0; font-size:10px; }
   .popup-row b{ color:#e6f0ff; font-size:11px; font-weight:700; }
+	.btn-kml-green {
+		display: inline-flex; align-items: center; justify-content: center;
+		padding: 4px 10px; margin-left: auto; margin-right: 8px;
+		background: rgba(0, 255, 136, 0.18); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+		border: 1px solid rgba(0, 255, 136, 0.45); border-radius: 20px;
+		color: #baffc9; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;
+		cursor: pointer; transition: 0.2s; box-shadow: 0 0 12px rgba(0,255,136,0.25);
+  }
+	.btn-kml-green:hover { background: rgba(0,255,136,0.28); transform: scale(1.05); }
+	.btn-kml-green:disabled { opacity: 0.3; pointer-events: none; }
 
 </style>
 </head>
@@ -267,9 +283,12 @@
   <canvas id="canvas"></canvas>
   <div id="compass"><span>N</span><div class="arrow"></div></div>
   
- <div id="popup-geotiff">
-    <label>Geotiff Ortho Photo</label>    
-    <button id="btn-load-dynamic" onclick="loadDynamicGeoTiff()" style="width: 100%; margin-top: 8px; padding: 7px 10px; font-size: 11px; font-weight: 600; background: #234d35; color: #c8ffda; border: 1px solid #3a7a53; border-radius: 6px; cursor: pointer; box-shadow: 0 0 6px rgba(46, 213, 115, 0.3);">
+  <div id="popup-geotiff">
+    <div class="popup-header">
+      <label style="margin:0;">Geotiff Ortho Photo</label>
+      <button class="btn-close" onclick="toggleGeoTiffPopup()">&times;</button>
+    </div>
+       <button id="btn-load-dynamic" onclick="loadDynamicGeoTiff()" style="width: 100%; margin-top: 8px; padding: 7px 10px; font-size: 11px; font-weight: 600; background: #234d35; color: #c8ffda; border: 1px solid #3a7a53; border-radius: 6px; cursor: pointer; box-shadow: 0 0 6px rgba(46, 213, 115, 0.3);">
       Load Map dari server /maps/{tag}.tif
     </button>   
     <div id="geotiff-status-text" style="display: none; margin-top: 6px; font-size: 11px; color: #ffeb3b; text-align: center; font-weight: bold;">
@@ -351,9 +370,10 @@
     </div>
   </div>
 
-  <div id="popup-node-list" class="popup-modal">
+    <div id="popup-node-list" class="popup-modal">
     <div class="popup-header">
       <span>ROVER</span>
+      <button id="btn-kml-boundary" class="btn-kml-green" onclick="downloadKMLBoundary()">KML Boundary</button>
       <button class="btn-close" onclick="toggleNodeListPopup()">&times;</button>
     </div>
     <div class="popup-body" id="node-list-container">
@@ -1741,6 +1761,40 @@ async function focusOnNode(unitName) {
   panTo(target.lon, target.lat, 2000);
 }
 
+function downloadKMLBoundary(){
+  if(!currentDispPeriPoints || currentDispPeriPoints.length===0){
+    alert('Boundary belum ada (dispperi kosong)');
+    return;
+  }
+  const tag = (currentProfile && currentProfile.name)? currentProfile.name : 'boundary';
+  const toCoord = p => `${p.lon.toFixed(8)},${p.lat.toFixed(8)},0`;
+  const redCoords = currentDispPeriPoints.map(toCoord).join(' ');
+  const safe = currentSafeCoord || currentDispPeriPoints[0];
+  let greenCoords = '';
+  if(currentGreenBoxes && currentGreenBoxes.length>0){
+    const offPoints = currentGreenBoxes.map(b=>b.p1Offset);
+    offPoints.push(currentGreenBoxes[currentGreenBoxes.length-1].p2Offset);
+    greenCoords = offPoints.map(toCoord).join(' ');
+  }
+  const kml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document>
+  <name>${tag}</name>
+  <Style id="redLine"><LineStyle><color>ff2222ff</color><width>3</width></LineStyle></Style>
+  <Style id="greenLine"><LineStyle><color>ff88ff00</color><width>3</width></LineStyle></Style>
+  <Placemark><name>Boundary - Garis Merah</name><styleUrl>#redLine</styleUrl><LineString><tessellate>1</tessellate><coordinates>${redCoords}</coordinates></LineString></Placemark>
+  ${greenCoords? `<Placemark><name>Offset 15m - Garis Hijau</name><styleUrl>#greenLine</styleUrl><LineString><tessellate>1</tessellate><coordinates>${greenCoords}</coordinates></LineString></Placemark>` : ''}
+</Document>
+</kml>`;
+  const blob = new Blob([kml], {type: 'application/vnd.google-earth.kml+xml'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = `${tag}_boundary.kml`; a.click();
+  setTimeout(()=>URL.revokeObjectURL(url), 2000);
+}
+setInterval(()=>{
+  const btn = document.getElementById('btn-kml-boundary');
+  if(btn) btn.disabled =!(currentDispPeriPoints && currentDispPeriPoints.length>0);
+}, 1000);
 
 
 function draw() {
@@ -1999,7 +2053,16 @@ window.addEventListener('DOMContentLoaded', () => {
   updateClock();
   setInterval(updateClock, 1000);
 });
+
+let lastDrawAt = Date.now();
+const _origDraw = draw;
+draw = function(){
+  lastDrawAt = Date.now();
+  return _origDraw.apply(this, arguments);
+};
+
+setInterval(()=>{ if(Date.now() - lastDrawAt > 2000){ requestDraw(); }}, 2000);
 </script>
-<footer>© 2026 GPRZ | v2.0</footer>
+<footer>© 2026 GPRZ | v2.1</footer>
 </body>
 </html>
