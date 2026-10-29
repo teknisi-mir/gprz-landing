@@ -451,9 +451,8 @@ async function parseGeoTIFF(file) {
     const tiff = await GeoTIFF.fromArrayBuffer(arrayBuffer);
     const image = await tiff.getImage();
 
-    let bbox = image.getBoundingBox(); // [minX, minY, maxX, maxY]
+    let bbox = image.getBoundingBox();
     let minLon = bbox[0], minLat = bbox[1], maxLon = bbox[2], maxLat = bbox[3];
-    
     if (Math.abs(minLat) > 90 || Math.abs(maxLat) > 90) {
       if (Math.abs(minLon) <= 90) {
         let tmpMinLat = minLon; minLon = minLat; minLat = tmpMinLat;
@@ -464,8 +463,36 @@ async function parseGeoTIFF(file) {
     const width = image.getWidth();
     const height = image.getHeight();
 
-    // Render raster ke Offscreen Canvas
-    const rgbData = await image.readRGB();
+    // --- FIX DI SINI ---
+    const fileDir = image.getFileDirectory();
+    const rasters = await image.readRasters({ interleave: false });
+    
+    let rgbData; // akan jadi Uint8Array RGBRGB...
+
+    if (rasters.length === 1 && fileDir.ColorMap) {
+      // KASUS 1 BAND + PALET (hasil compressor lu)
+      console.log("1 band + colormap detected");
+      const idx = rasters[0];
+      const colorMap = fileDir.ColorMap; // 3 * 256, 0-65535
+      rgbData = new Uint8Array(idx.length * 3);
+      for (let i = 0; i < idx.length; i++) {
+        const c = idx[i];
+        rgbData[i*3]     = colorMap[c] / 256;
+        rgbData[i*3 + 1] = colorMap[c + 256] / 256;
+        rgbData[i*3 + 2] = colorMap[c + 512] / 256;
+      }
+    } else {
+      // KASUS 3 BAND NORMAL
+      const interleaved = await image.readRasters({ interleave: true });
+      // kalau readRasters interleave 3 band, sudah RGB
+      if (interleaved.length === width*height*3) {
+        rgbData = interleaved;
+      } else {
+        // fallback pakai readRGB kalau ada
+        rgbData = await image.readRGB();
+      }
+    }
+
     const offCanvas = document.createElement('canvas');
     offCanvas.width = width;
     offCanvas.height = height;
@@ -474,20 +501,16 @@ async function parseGeoTIFF(file) {
 
     let j = 0;
     for (let i = 0; i < rgbData.length; i += 3) {
-      imgData.data[j]     = rgbData[i];     // Red
-      imgData.data[j + 1] = rgbData[i + 1]; // Green
-      imgData.data[j + 2] = rgbData[i + 2]; // Blue
-      imgData.data[j + 3] = 255;           // Alpha
+      imgData.data[j] = rgbData[i];
+      imgData.data[j + 1] = rgbData[i + 1];
+      imgData.data[j + 2] = rgbData[i + 2];
+      imgData.data[j + 3] = 255;
       j += 4;
     }
     offCtx.putImageData(imgData, 0, 0);
 
-    tiffData = {
-      imageCanvas: offCanvas,
-      bbox: [minLon, minLat, maxLon, maxLat]
-    };
-
-    document.getElementById('status').innerText = `GeoTIFF Dimuat (${width}x${height} px)`;
+    tiffData = { imageCanvas: offCanvas, bbox: [minLon, minLat, maxLon, maxLat] };
+    document.getElementById('status').innerText = `GeoTIFF Dimuat (${width}x${height} px) - ${rasters.length} band`;
     resetView();
     draw();
   } catch (err) {
